@@ -152,5 +152,7 @@ node_modules/
 dashboard/.next/
 dashboard/out/
 
-# Electron build output
-electron/dist/
+# Desktop app (no longer used - cloud only)
+electron/
+deploy/
+*.bat

@@ -4,7 +4,6 @@ Interfaz Web con Streamlit
 """
 
 import re
-import socket
 import streamlit as st
 import pandas as pd
 from pathlib import Path
@@ -5402,14 +5401,6 @@ def main():
         st.markdown("---")
         st.caption("DAEM = Subvención (municipio)")
         st.caption("CPEIP = Transferencia (ministerio)")
-
-        # Acceso en red local
-        st.markdown("---")
-        try:
-            local_ip = socket.gethostbyname(socket.gethostname())
-            st.caption(f"Red local: http://{local_ip}:8501")
-        except Exception:
-            pass
 
         # Preferencias de pestañas visibles
         st.markdown("---")
