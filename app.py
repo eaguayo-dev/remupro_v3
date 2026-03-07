@@ -3122,6 +3122,44 @@ def tab_todo_en_uno():
                 key="mes_anterior_select"
             )
 
+    # Filtro de Tipo de Pago (lee del web_sostenedor)
+    tipos_pago_disponibles = []
+    if f_web:
+        try:
+            f_web.seek(0)
+            web_name = f_web.name.lower()
+            if web_name.endswith('.csv'):
+                try:
+                    df_web_preview = pd.read_csv(BytesIO(f_web.read()), encoding='utf-8', nrows=5000)
+                except UnicodeDecodeError:
+                    f_web.seek(0)
+                    df_web_preview = pd.read_csv(BytesIO(f_web.read()), encoding='latin-1', nrows=5000)
+            else:
+                f_web.seek(0)
+                df_web_preview = pd.read_excel(BytesIO(f_web.read()), engine='openpyxl', nrows=5000)
+            f_web.seek(0)
+            tp_col = next(
+                (c for c in df_web_preview.columns if 'tipo de pago' in c.lower()),
+                None,
+            )
+            if tp_col:
+                tipos_pago_disponibles = sorted(
+                    df_web_preview[tp_col].dropna().astype(str).unique().tolist(), key=str
+                )
+        except Exception:
+            pass
+
+    tipo_pago_sel = None
+    if tipos_pago_disponibles:
+        st.markdown("##### 💼 Filtro de Tipo de Pago")
+        st.caption("Excluye tipos como **Reajuste** o **Reliquidación** que inflan las horas")
+        tipo_pago_sel = st.multiselect(
+            "Tipos a incluir en el cálculo",
+            options=tipos_pago_disponibles,
+            default=tipos_pago_disponibles,
+            key="todouno_tipo_pago_filter"
+        )
+
     # Opción para guardar en BD
     guardar_bd = st.checkbox(
         "💾 Guardar en base de datos (para comparaciones futuras)",
@@ -3159,6 +3197,9 @@ def tab_todo_en_uno():
             if mes and '-' in mes:
                 todouno_month_filter = mes.split('-')[1]
 
+            # Filtro de tipo de pago (None = sin filtro, lista = solo esos tipos)
+            tp_filter = tipo_pago_sel if (tipo_pago_sel and len(tipo_pago_sel) < len(tipos_pago_disponibles)) else None
+
             # Procesar todo
             df_result, audit = processor.process_all(
                 sep_bruto_path=paths['sep'],
@@ -3167,6 +3208,7 @@ def tab_todo_en_uno():
                 output_path=out_path,
                 progress_callback=callback,
                 month_filter=todouno_month_filter,
+                tipo_pago_filter=tp_filter,
             )
 
             progress.progress(100)
@@ -5372,6 +5414,359 @@ def tab_horas_contrato():
 
 
 # ============================================================================
+# COMPARAR MESES (sin BD, basado en archivos)
+# ============================================================================
+
+def tab_comparar_meses():
+    """Pestaña para comparar meses subiendo archivos BRP procesados."""
+
+    with st.expander("📖 ¿Cómo usar esta herramienta?", expanded=False):
+        show_tutorial([
+            ("Sube archivos BRP", "Arrastra los archivos Excel generados por 'Todo en Uno' (brp_distribuido*.xlsx)."),
+            ("Detecta meses", "El sistema lee la columna 'Mes' o detecta el mes del nombre del archivo."),
+            ("Compara visualmente", "Gráficos interactivos para comparar evolución de BRP, docentes y escuelas."),
+        ])
+
+    info_box("Sube <b>2 o más archivos BRP procesados</b> para comparar meses sin necesidad de base de datos.")
+
+    uploaded = st.file_uploader(
+        "Archivos BRP procesados (Excel)",
+        type=['xlsx'],
+        accept_multiple_files=True,
+        key="comparar_meses_upload"
+    )
+
+    if not uploaded or len(uploaded) < 2:
+        warning_box("Sube al menos **2 archivos** BRP procesados para comparar.")
+        return
+
+    # Leer y combinar archivos
+    all_dfs = []
+    for f in uploaded:
+        try:
+            f.seek(0)
+            df = pd.read_excel(BytesIO(f.read()), sheet_name='BRP_DISTRIBUIDO', engine='openpyxl')
+
+            # Detectar mes: columna MES o nombre del archivo
+            mes_col = next((c for c in df.columns if c.upper() == 'MES'), None)
+            if mes_col and df[mes_col].nunique() == 1:
+                mes_label = str(df[mes_col].iloc[0])
+            else:
+                # Intentar detectar del nombre del archivo
+                mes_label = detect_month_from_filename(f.name) or f.name.replace('.xlsx', '')
+
+            df['_MES_COMP'] = mes_label
+            df['_ARCHIVO'] = f.name
+            all_dfs.append(df)
+        except Exception as e:
+            st.warning(f"No se pudo leer {f.name}: {e}")
+
+    if len(all_dfs) < 2:
+        st.error("Se necesitan al menos 2 archivos válidos.")
+        return
+
+    df_all = pd.concat(all_dfs, ignore_index=True)
+    meses = df_all['_MES_COMP'].unique().tolist()
+
+    # Normalizar columnas clave
+    col_rut = _find_col(df_all, 'rut')
+    col_rbd = _find_col(df_all, 'rbd')
+    col_nombre = _find_col(df_all, 'nombre_completo', 'nombre')
+
+    # Calcular resúmenes por mes
+    brp_cols = ['BRP_SEP', 'BRP_PIE', 'BRP_NORMAL', 'BRP_TOTAL']
+    brp_cols = [c for c in brp_cols if c in df_all.columns]
+    daem_cols = [c for c in ['TOTAL_DAEM_SEP', 'TOTAL_DAEM_PIE', 'TOTAL_DAEM_NORMAL'] if c in df_all.columns]
+    cpeip_cols = [c for c in ['TOTAL_CPEIP_SEP', 'TOTAL_CPEIP_PIE', 'TOTAL_CPEIP_NORMAL'] if c in df_all.columns]
+
+    resumen_mensual = []
+    for mes in meses:
+        df_mes = df_all[df_all['_MES_COMP'] == mes]
+        row = {'Mes': mes}
+        row['Docentes'] = df_mes[col_rut].nunique() if col_rut else len(df_mes)
+        row['Establecimientos'] = df_mes[col_rbd].nunique() if col_rbd else 0
+        for c in brp_cols:
+            row[c] = df_mes[c].sum()
+        for c in daem_cols:
+            row[c] = df_mes[c].sum()
+        for c in cpeip_cols:
+            row[c] = df_mes[c].sum()
+        resumen_mensual.append(row)
+
+    df_resumen = pd.DataFrame(resumen_mensual)
+
+    st.markdown("---")
+
+    # Métricas de resumen
+    st.markdown("### Comparación de Meses")
+    mc = st.columns(len(meses))
+    for i, mes in enumerate(meses):
+        r = df_resumen[df_resumen['Mes'] == mes].iloc[0]
+        with mc[i]:
+            with st.container(border=True):
+                st.markdown(f"**{mes}**")
+                st.metric("BRP Total", fmt_clp(r.get('BRP_TOTAL', 0)))
+                st.metric("Docentes", int(r.get('Docentes', 0)))
+
+    # Tabs de análisis
+    import plotly.graph_objects as go
+    import plotly.express as px
+
+    chart_tabs = st.tabs(["📈 Evolución BRP", "🏫 Por Establecimiento", "👥 Docentes", "📊 DAEM vs CPEIP", "🔄 Cambios"])
+
+    with chart_tabs[0]:
+        # Evolución BRP por tipo de subvención
+        st.markdown("#### Evolución BRP por Subvención")
+
+        fig = go.Figure()
+        colors = {'BRP_SEP': '#2563eb', 'BRP_PIE': '#059669', 'BRP_NORMAL': '#ea580c', 'BRP_TOTAL': '#7c3aed'}
+        names = {'BRP_SEP': 'SEP', 'BRP_PIE': 'PIE', 'BRP_NORMAL': 'Normal', 'BRP_TOTAL': 'Total'}
+
+        for col in brp_cols:
+            fig.add_trace(go.Bar(
+                x=df_resumen['Mes'], y=df_resumen[col],
+                name=names.get(col, col), marker_color=colors.get(col, '#666'),
+            ))
+        fig.update_layout(barmode='group', yaxis_title='Monto ($)', xaxis_title='Mes')
+        st.plotly_chart(fig, width='stretch')
+
+        # Tabla resumen
+        df_show = df_resumen[['Mes', 'Docentes', 'Establecimientos'] + brp_cols].copy()
+        df_show_display = append_totals_row(df_show, label_col='Mes', label='PROMEDIO', skip_cols={'Mes'})
+        # Reemplazar sumas por promedios en la fila PROMEDIO
+        if len(df_resumen) > 0:
+            for c in brp_cols + ['Docentes', 'Establecimientos']:
+                if c in df_show_display.columns:
+                    df_show_display.iloc[-1, df_show_display.columns.get_loc(c)] = df_resumen[c].mean()
+        st.dataframe(
+            df_show_display.style.format(format_money_cols(df_show_display, exclude_cols={'Mes', 'Docentes', 'Establecimientos'})),
+            hide_index=True, width='stretch'
+        )
+
+        # Variación porcentual entre meses consecutivos
+        if len(df_resumen) >= 2 and 'BRP_TOTAL' in df_resumen.columns:
+            st.markdown("#### Variación Porcentual Mes a Mes")
+            df_var = df_resumen[['Mes', 'BRP_TOTAL']].copy()
+            df_var['Variación %'] = df_var['BRP_TOTAL'].pct_change() * 100
+            df_var['Variación $'] = df_var['BRP_TOTAL'].diff()
+            df_var = df_var.iloc[1:]  # quitar primer mes sin variación
+
+            fig_var = go.Figure()
+            fig_var.add_trace(go.Bar(
+                x=df_var['Mes'], y=df_var['Variación %'],
+                marker_color=[('#10b981' if v >= 0 else '#ef4444') for v in df_var['Variación %']],
+                text=[f"{v:+.1f}%" for v in df_var['Variación %']],
+                textposition='outside',
+            ))
+            fig_var.update_layout(yaxis_title='Variación %', xaxis_title='Mes')
+            st.plotly_chart(fig_var, width='stretch')
+
+    with chart_tabs[1]:
+        st.markdown("#### BRP por Establecimiento y Mes")
+
+        if col_rbd:
+            # Agrupar por RBD y mes
+            agg_cols_rbd = {'BRP_TOTAL': 'sum'}
+            if col_rut:
+                agg_cols_rbd[col_rut] = 'nunique'
+            df_rbd_mes = df_all.groupby([col_rbd, '_MES_COMP']).agg(**{
+                k: pd.NamedAgg(column=v if isinstance(v, str) and v in df_all.columns else k, aggfunc=v if isinstance(v, str) else v)
+                for k, v in agg_cols_rbd.items()
+            }).reset_index() if False else None
+
+            # Simpler approach
+            group_cols = {col_rbd: 'first', '_MES_COMP': 'first'}
+            df_rbd_mes = df_all.groupby([col_rbd, '_MES_COMP']).agg(
+                BRP_TOTAL=('BRP_TOTAL', 'sum'),
+            ).reset_index()
+
+            if col_rut and col_rut in df_all.columns:
+                doc_count = df_all.groupby([col_rbd, '_MES_COMP'])[col_rut].nunique().reset_index()
+                doc_count.columns = [col_rbd, '_MES_COMP', 'Docentes']
+                df_rbd_mes = df_rbd_mes.merge(doc_count, on=[col_rbd, '_MES_COMP'], how='left')
+
+            df_rbd_mes = add_school_names(df_rbd_mes, rbd_col=col_rbd)
+            label_col = 'ESCUELA' if 'ESCUELA' in df_rbd_mes.columns else col_rbd
+
+            fig_rbd = px.bar(
+                df_rbd_mes, x=label_col, y='BRP_TOTAL', color='_MES_COMP',
+                barmode='group', labels={'_MES_COMP': 'Mes', 'BRP_TOTAL': 'BRP Total'},
+            )
+            fig_rbd.update_layout(xaxis_tickangle=-45)
+            st.plotly_chart(fig_rbd, width='stretch')
+
+            # Tabla pivot: escuela × mes
+            pivot = df_rbd_mes.pivot_table(
+                index=label_col, columns='_MES_COMP', values='BRP_TOTAL', aggfunc='sum', fill_value=0
+            ).reset_index()
+            st.dataframe(
+                pivot.style.format({c: lambda v: fmt_clp(v) for c in pivot.columns if c != label_col}),
+                hide_index=True, width='stretch'
+            )
+        else:
+            st.info("No se encontró columna RBD para agrupar por establecimiento.")
+
+    with chart_tabs[2]:
+        st.markdown("#### Análisis por Docente")
+
+        if col_rut:
+            # Docentes presentes en cada mes
+            docentes_por_mes = {}
+            for mes in meses:
+                df_mes = df_all[df_all['_MES_COMP'] == mes]
+                docentes_por_mes[mes] = set(df_mes[col_rut].unique())
+
+            # Venn-like: nuevos, salieron, permanecen
+            if len(meses) >= 2:
+                for i in range(1, len(meses)):
+                    mes_ant, mes_act = meses[i - 1], meses[i]
+                    ruts_ant = docentes_por_mes[mes_ant]
+                    ruts_act = docentes_por_mes[mes_act]
+
+                    nuevos = ruts_act - ruts_ant
+                    salieron = ruts_ant - ruts_act
+                    permanecen = ruts_ant & ruts_act
+
+                    st.markdown(f"##### {mes_ant} → {mes_act}")
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        st.metric("Permanecen", len(permanecen))
+                    with c2:
+                        st.metric("Nuevos", f"+{len(nuevos)}", delta=len(nuevos), delta_color="normal")
+                    with c3:
+                        st.metric("Salieron", f"-{len(salieron)}", delta=-len(salieron), delta_color="inverse")
+
+                    # Top cambios de monto
+                    if permanecen and 'BRP_TOTAL' in df_all.columns:
+                        df_ant = df_all[df_all['_MES_COMP'] == mes_ant].set_index(col_rut)
+                        df_act = df_all[df_all['_MES_COMP'] == mes_act].set_index(col_rut)
+
+                        cambios = []
+                        for rut in permanecen:
+                            try:
+                                brp_ant = df_ant.loc[rut, 'BRP_TOTAL']
+                                brp_act = df_act.loc[rut, 'BRP_TOTAL']
+                                if isinstance(brp_ant, pd.Series):
+                                    brp_ant = brp_ant.sum()
+                                if isinstance(brp_act, pd.Series):
+                                    brp_act = brp_act.sum()
+                                diff = brp_act - brp_ant
+                                if abs(diff) > 0:
+                                    nombre = ''
+                                    if col_nombre:
+                                        n = df_act.loc[rut, col_nombre] if col_nombre in df_act.columns else ''
+                                        nombre = n.iloc[0] if isinstance(n, pd.Series) else str(n)
+                                    cambios.append({
+                                        'RUT': rut, 'NOMBRE': nombre,
+                                        f'BRP_{mes_ant}': brp_ant, f'BRP_{mes_act}': brp_act,
+                                        'DIFERENCIA': diff,
+                                        'CAMBIO_%': round((diff / brp_ant * 100) if brp_ant else 0, 1),
+                                    })
+                            except (KeyError, TypeError):
+                                continue
+
+                        if cambios:
+                            df_cambios = pd.DataFrame(cambios).sort_values('DIFERENCIA', key=abs, ascending=False)
+                            with st.expander(f"Top cambios de monto ({len(df_cambios)} docentes)", expanded=False):
+                                st.dataframe(df_cambios.head(20), hide_index=True, width='stretch')
+
+                    # Docentes nuevos
+                    if nuevos:
+                        df_nuevos = df_all[(df_all['_MES_COMP'] == mes_act) & (df_all[col_rut].isin(nuevos))]
+                        cols_show = [c for c in [col_rut, col_nombre, 'BRP_TOTAL'] if c and c in df_nuevos.columns]
+                        if cols_show:
+                            with st.expander(f"Docentes nuevos en {mes_act} ({len(nuevos)})", expanded=False):
+                                st.dataframe(df_nuevos[cols_show].drop_duplicates(), hide_index=True, width='stretch')
+
+        else:
+            st.info("No se encontró columna RUT.")
+
+    with chart_tabs[3]:
+        st.markdown("#### DAEM vs CPEIP por Mes")
+
+        if daem_cols and cpeip_cols:
+            df_pago = df_resumen[['Mes']].copy()
+            df_pago['DAEM'] = sum(df_resumen[c] for c in daem_cols)
+            df_pago['CPEIP'] = sum(df_resumen[c] for c in cpeip_cols)
+
+            fig_pago = go.Figure()
+            fig_pago.add_trace(go.Bar(x=df_pago['Mes'], y=df_pago['DAEM'], name='DAEM (Subvención)', marker_color='#3b82f6'))
+            fig_pago.add_trace(go.Bar(x=df_pago['Mes'], y=df_pago['CPEIP'], name='CPEIP (Transferencia)', marker_color='#f59e0b'))
+            fig_pago.update_layout(barmode='stack', yaxis_title='Monto ($)')
+            st.plotly_chart(fig_pago, width='stretch')
+
+            # Proporción
+            st.markdown("#### Proporción DAEM / CPEIP")
+            fig_prop = go.Figure()
+            for _, row in df_pago.iterrows():
+                total = row['DAEM'] + row['CPEIP']
+                if total > 0:
+                    fig_prop.add_trace(go.Bar(
+                        y=[row['Mes']], x=[row['DAEM'] / total * 100],
+                        name=f"DAEM {row['Mes']}", orientation='h',
+                        marker_color='#3b82f6', showlegend=False,
+                        text=f"DAEM {row['DAEM']/total*100:.0f}%", textposition='inside',
+                    ))
+                    fig_prop.add_trace(go.Bar(
+                        y=[row['Mes']], x=[row['CPEIP'] / total * 100],
+                        name=f"CPEIP {row['Mes']}", orientation='h',
+                        marker_color='#f59e0b', showlegend=False,
+                        text=f"CPEIP {row['CPEIP']/total*100:.0f}%", textposition='inside',
+                    ))
+            fig_prop.update_layout(barmode='stack', xaxis_title='%', yaxis_title='Mes')
+            st.plotly_chart(fig_prop, width='stretch')
+        else:
+            st.info("No se encontraron columnas DAEM/CPEIP en los archivos.")
+
+    with chart_tabs[4]:
+        st.markdown("#### Resumen de Cambios")
+
+        # Evolución de SEP/PIE/Normal como área
+        if all(c in df_resumen.columns for c in ['BRP_SEP', 'BRP_PIE', 'BRP_NORMAL']):
+            fig_area = go.Figure()
+            fig_area.add_trace(go.Scatter(
+                x=df_resumen['Mes'], y=df_resumen['BRP_SEP'],
+                mode='lines+markers', name='SEP', fill='tozeroy',
+                line=dict(color='#2563eb'),
+            ))
+            fig_area.add_trace(go.Scatter(
+                x=df_resumen['Mes'], y=df_resumen['BRP_PIE'],
+                mode='lines+markers', name='PIE', fill='tozeroy',
+                line=dict(color='#059669'),
+            ))
+            fig_area.add_trace(go.Scatter(
+                x=df_resumen['Mes'], y=df_resumen['BRP_NORMAL'],
+                mode='lines+markers', name='Normal', fill='tozeroy',
+                line=dict(color='#ea580c'),
+            ))
+            fig_area.update_layout(yaxis_title='Monto ($)', xaxis_title='Mes')
+            st.plotly_chart(fig_area, width='stretch')
+
+        # Treemap del último mes
+        if col_rbd and 'BRP_TOTAL' in df_all.columns:
+            ultimo_mes = meses[-1]
+            df_tree = df_all[df_all['_MES_COMP'] == ultimo_mes].copy()
+            df_tree = add_school_names(df_tree, rbd_col=col_rbd)
+            label_col = 'ESCUELA' if 'ESCUELA' in df_tree.columns else col_rbd
+            df_tree_agg = df_tree.groupby(label_col).agg(
+                BRP_TOTAL=('BRP_TOTAL', 'sum'),
+            ).reset_index()
+            df_tree_agg = df_tree_agg[df_tree_agg['BRP_TOTAL'] > 0]
+
+            if not df_tree_agg.empty:
+                st.markdown(f"#### Distribución por Escuela ({ultimo_mes})")
+                fig_tree = px.treemap(
+                    df_tree_agg, path=[label_col], values='BRP_TOTAL',
+                    color='BRP_TOTAL', color_continuous_scale='Blues',
+                )
+                fig_tree.update_traces(textinfo='label+value+percent root')
+                st.plotly_chart(fig_tree, width='stretch')
+
+        # Descarga del resumen
+        add_table_downloads(df_resumen, 'comparacion_meses', 'comp_meses')
+
+
+# ============================================================================
 # MAIN
 # ============================================================================
 
@@ -5415,8 +5810,8 @@ def main():
     show_header()
 
     # Tabs dinámicos según preferencias
-    tab_names = ["⚡ Todo en Uno", "📊 SEP / PIE / EIB", "📅 Lote Anual", "⏱ Horas x Contrato"]
-    tab_funcs = [tab_todo_en_uno, tab_sep_pie, tab_lote_anual, tab_horas_contrato]
+    tab_names = ["⚡ Todo en Uno", "📊 SEP / PIE / EIB", "📅 Lote Anual", "📉 Comparar Meses", "⏱ Horas x Contrato"]
+    tab_funcs = [tab_todo_en_uno, tab_sep_pie, tab_lote_anual, tab_comparar_meses, tab_horas_contrato]
 
     if st.session_state.get("pref_brp"):
         tab_names.append("💰 Distribución BRP")

@@ -51,6 +51,7 @@ class IntegradoProcessor(BaseProcessor):
         progress_callback: ProgressCallback,
         keep_intermediates: bool = False,
         month_filter: Optional[str] = None,
+        tipo_pago_filter: Optional[list] = None,
     ) -> Tuple[pd.DataFrame, AuditLog]:
         """
         Procesa todos los archivos en un solo flujo.
@@ -110,6 +111,7 @@ class IntegradoProcessor(BaseProcessor):
                 output_path,
                 lambda v, m: progress_callback(55 + int(v * 0.35), m),
                 month_filter=month_filter,
+                tipo_pago_filter=tipo_pago_filter,
             )
 
             # 5. Identificar docentes EIB (90-95%)
@@ -219,6 +221,7 @@ class IntegradoProcessor(BaseProcessor):
         output_path: Path,
         progress_callback: ProgressCallback,
         month_filter: Optional[str] = None,
+        tipo_pago_filter: Optional[list] = None,
     ) -> pd.DataFrame:
         """Procesa distribución BRP."""
         try:
@@ -229,6 +232,7 @@ class IntegradoProcessor(BaseProcessor):
                 output_path=output_path,
                 progress_callback=progress_callback,
                 month_filter=month_filter,
+                tipo_pago_filter=tipo_pago_filter,
             )
 
             # Leer resultado

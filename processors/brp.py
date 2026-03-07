@@ -42,18 +42,23 @@ class BRPProcessor(BaseProcessor):
         output_path: Path,
         progress_callback: ProgressCallback,
         month_filter: Optional[str] = None,
+        tipo_pago_filter: Optional[List[str]] = None,
     ) -> None:
         """Procesa y distribuye BRP.
 
         Args:
             month_filter: Mes a filtrar en web sostenedor ('01'-'12'). None = sin filtro.
+            tipo_pago_filter: Lista de tipos de pago a incluir. None = todos.
         """
         try:
             progress_callback(0, "Iniciando distribución BRP...")
 
             # 1. Cargar archivos
             progress_callback(5, "Cargando archivo MINEDUC...")
-            df_web = self._load_web_sostenedor(web_sostenedor_path, month_filter=month_filter)
+            df_web = self._load_web_sostenedor(
+                web_sostenedor_path, month_filter=month_filter,
+                tipo_pago_filter=tipo_pago_filter,
+            )
             
             progress_callback(15, "Cargando archivo SEP procesado...")
             df_sep = self._load_processed_file(sep_procesado_path, 'SEP')
@@ -396,11 +401,15 @@ class BRPProcessor(BaseProcessor):
 
         return pd.DataFrame(resumen)
     
-    def _load_web_sostenedor(self, path: Path, month_filter: Optional[str] = None) -> pd.DataFrame:
+    def _load_web_sostenedor(
+        self, path: Path, month_filter: Optional[str] = None,
+        tipo_pago_filter: Optional[List[str]] = None,
+    ) -> pd.DataFrame:
         """Carga y valida el archivo web_sostenedor (CSV o Excel).
 
         Args:
             month_filter: Mes a filtrar ('01'-'12'). None = sin filtro.
+            tipo_pago_filter: Lista de tipos de pago a incluir. None = todos.
         """
         self.validate_file(path)
 
@@ -452,6 +461,23 @@ class BRPProcessor(BaseProcessor):
                     f"Filtrado web sostenedor: {len(df)} filas para "
                     f"{month_name or month_filter}"
                 )
+
+        # Filtrar por tipo de pago si se especifica
+        if tipo_pago_filter is not None:
+            tp_col = next(
+                (c for c in df.columns if 'tipo de pago' in c.lower() or 'tipo_pago' in c.lower()),
+                None,
+            )
+            if tp_col:
+                antes = len(df)
+                df = df[df[tp_col].astype(str).isin(tipo_pago_filter)]
+                df = df.reset_index(drop=True)
+                excluidos = antes - len(df)
+                if excluidos > 0:
+                    self.logger.info(
+                        f"Filtrado tipo de pago: {excluidos} filas excluidas, "
+                        f"{len(df)} filas restantes"
+                    )
 
         # Buscar columnas de forma flexible
         def find_col(target):
