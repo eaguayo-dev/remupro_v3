@@ -78,6 +78,23 @@ def _normalize_for_comparison(name: str) -> str:
     return n
 
 
+def parse_school_name(full_name: str) -> str:
+    """Extrae nombre corto de escuela, removiendo prefijos como ESCUELA, LICEO, etc.
+
+    Ejemplos:
+        'ESCUELA RUCATRARO ALTO' → 'RUCATRARO ALTO'
+        'LICEO GREGORIO URRUTIA' → 'GREGORIO URRUTIA'
+        'ESCUELA DAME LA MANO' → 'DAME LA MANO'
+    """
+    name = str(full_name).strip().upper()
+    prefixes = ['ESCUELA BASICA', 'ESCUELA ESPECIAL', 'ESCUELA', 'LICEO', 'COLEGIO', 'JARDIN INFANTIL']
+    for prefix in prefixes:
+        if name.startswith(prefix + ' '):
+            name = name[len(prefix):].strip()
+            break
+    return name
+
+
 def match_ubicacion(ubicacion: str) -> Optional[Tuple[str, str]]:
     """
     Matchea una ubicación (de liquidación) a un establecimiento conocido.

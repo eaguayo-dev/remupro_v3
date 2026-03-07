@@ -19,6 +19,7 @@ from config.columns import (
     WEB_SOSTENEDOR_COLUMNS, WEB_CRITICAL_COLUMNS,
     WEB_INFO_COLUMNS, WEB_FRIENDLY_NAMES, normalize_rut
 )
+from config.escuelas import get_rbd_map, parse_school_name
 
 
 class BRPProcessor(BaseProcessor):
@@ -143,7 +144,35 @@ class BRPProcessor(BaseProcessor):
                 df_multi.to_excel(writer, sheet_name='MULTI_ESTABLECIMIENTO', index=False)
                 self.logger.info(f"📋 Hoja MULTI_ESTABLECIMIENTO: {df_multi['RUT'].nunique()} docentes")
 
+            # Hojas por establecimiento (nombre parseado)
+            self._add_per_school_sheets(df_export, writer)
+
         self.logger.info(f"✅ Archivo guardado: {output_path.name}")
+
+    def _add_per_school_sheets(self, df_export: pd.DataFrame, writer) -> None:
+        """Agrega una hoja por cada establecimiento con nombre parseado."""
+        col_rbd = self.cols_actual.get('rbd')
+        if not col_rbd or col_rbd not in df_export.columns:
+            return
+
+        rbd_map = get_rbd_map()
+        used_names = set()
+
+        for rbd_val, df_school in df_export.groupby(col_rbd):
+            rbd_str = str(int(rbd_val)) if isinstance(rbd_val, float) else str(rbd_val)
+            full_name = rbd_map.get(rbd_str, f'RBD_{rbd_str}')
+            short_name = parse_school_name(full_name) if full_name != f'RBD_{rbd_str}' else full_name
+
+            # Excel sheet names: max 31 chars, unique
+            sheet_name = short_name[:31]
+            if sheet_name in used_names:
+                sheet_name = f"{short_name[:27]}_{rbd_str}"[:31]
+            used_names.add(sheet_name)
+
+            try:
+                df_school.to_excel(writer, sheet_name=sheet_name, index=False)
+            except Exception as e:
+                self.logger.warning(f"No se pudo crear hoja '{sheet_name}': {e}")
     
     def _prepare_export_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
         """Prepara DataFrame para exportar con nombres y columnas ordenadas."""

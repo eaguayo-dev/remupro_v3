@@ -1042,11 +1042,22 @@ st.markdown("""
         font-weight: 700 !important;
         color: #3b82f6 !important;
     }
-    
+
     [data-testid="stMetricLabel"] {
         font-weight: 500;
     }
-    
+
+    /* ===== COLOR CODING SEP/PIE/NORMAL ===== */
+    .metric-sep [data-testid="stMetricValue"] { color: #2563eb !important; }
+    .metric-pie [data-testid="stMetricValue"] { color: #059669 !important; }
+    .metric-normal [data-testid="stMetricValue"] { color: #ea580c !important; }
+    .metric-total [data-testid="stMetricValue"] { color: #7c3aed !important; }
+
+    .badge-sep { background: #2563eb; color: white; padding: 0.2rem 0.6rem; border-radius: 6px; font-size: 0.75rem; font-weight: 600; }
+    .badge-pie { background: #059669; color: white; padding: 0.2rem 0.6rem; border-radius: 6px; font-size: 0.75rem; font-weight: 600; }
+    .badge-normal { background: #ea580c; color: white; padding: 0.2rem 0.6rem; border-radius: 6px; font-size: 0.75rem; font-weight: 600; }
+    .badge-total { background: #7c3aed; color: white; padding: 0.2rem 0.6rem; border-radius: 6px; font-size: 0.75rem; font-weight: 600; }
+
     /* ===== EXPANDER ===== */
     .streamlit-expanderHeader {
         font-weight: 600;
@@ -2695,22 +2706,34 @@ def tab_brp():
 
         st.markdown("---")
 
-        # Métricas principales siempre visibles
+        # Métricas principales siempre visibles con color coding
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            st.metric("SEP", fmt_clp(brp_sep))
-            if total > 0:
-                st.badge(f"{100*brp_sep/total:.1f}%", color="blue")
+            with st.container(border=True):
+                st.markdown('<div class="metric-sep">', unsafe_allow_html=True)
+                st.metric("SEP", fmt_clp(brp_sep))
+                if total > 0:
+                    st.badge(f"{100*brp_sep/total:.1f}%", color="blue")
+                st.markdown('</div>', unsafe_allow_html=True)
         with c2:
-            st.metric("PIE", fmt_clp(brp_pie))
-            if total > 0:
-                st.badge(f"{100*brp_pie/total:.1f}%", color="green")
+            with st.container(border=True):
+                st.markdown('<div class="metric-pie">', unsafe_allow_html=True)
+                st.metric("PIE", fmt_clp(brp_pie))
+                if total > 0:
+                    st.badge(f"{100*brp_pie/total:.1f}%", color="green")
+                st.markdown('</div>', unsafe_allow_html=True)
         with c3:
-            st.metric("NORMAL", fmt_clp(brp_normal))
-            if total > 0:
-                st.badge(f"{100*brp_normal/total:.1f}%", color="orange")
+            with st.container(border=True):
+                st.markdown('<div class="metric-normal">', unsafe_allow_html=True)
+                st.metric("NORMAL", fmt_clp(brp_normal))
+                if total > 0:
+                    st.badge(f"{100*brp_normal/total:.1f}%", color="orange")
+                st.markdown('</div>', unsafe_allow_html=True)
         with c4:
-            st.metric("TOTAL", fmt_clp(total))
+            with st.container(border=True):
+                st.markdown('<div class="metric-total">', unsafe_allow_html=True)
+                st.metric("TOTAL", fmt_clp(total))
+                st.markdown('</div>', unsafe_allow_html=True)
             st.badge("BRP Total", color="violet")
 
         res_tabs = st.tabs(["📈 Resumen", "📊 Gráficos", "🔍 Detalle", "📥 Descarga"])
@@ -3270,23 +3293,35 @@ def tab_todo_en_uno():
 
         st.markdown("---")
 
-        # Métricas principales siempre visibles
+        # Métricas principales siempre visibles con color coding
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            st.metric("SEP", fmt_clp(brp_sep))
-            if brp_total > 0:
-                st.badge(f"{100*brp_sep/brp_total:.1f}%", color="blue")
+            with st.container(border=True):
+                st.markdown('<div class="metric-sep">', unsafe_allow_html=True)
+                st.metric("SEP", fmt_clp(brp_sep))
+                if brp_total > 0:
+                    st.badge(f"{100*brp_sep/brp_total:.1f}%", color="blue")
+                st.markdown('</div>', unsafe_allow_html=True)
         with c2:
-            st.metric("PIE", fmt_clp(brp_pie))
-            if brp_total > 0:
-                st.badge(f"{100*brp_pie/brp_total:.1f}%", color="green")
+            with st.container(border=True):
+                st.markdown('<div class="metric-pie">', unsafe_allow_html=True)
+                st.metric("PIE", fmt_clp(brp_pie))
+                if brp_total > 0:
+                    st.badge(f"{100*brp_pie/brp_total:.1f}%", color="green")
+                st.markdown('</div>', unsafe_allow_html=True)
         with c3:
-            st.metric("NORMAL", fmt_clp(brp_normal))
-            if brp_total > 0:
-                st.badge(f"{100*brp_normal/brp_total:.1f}%", color="orange")
+            with st.container(border=True):
+                st.markdown('<div class="metric-normal">', unsafe_allow_html=True)
+                st.metric("NORMAL", fmt_clp(brp_normal))
+                if brp_total > 0:
+                    st.badge(f"{100*brp_normal/brp_total:.1f}%", color="orange")
+                st.markdown('</div>', unsafe_allow_html=True)
         with c4:
-            st.metric("TOTAL", fmt_clp(brp_total))
-            st.badge("BRP Total", color="violet")
+            with st.container(border=True):
+                st.markdown('<div class="metric-total">', unsafe_allow_html=True)
+                st.metric("TOTAL", fmt_clp(brp_total))
+                st.badge("BRP Total", color="violet")
+                st.markdown('</div>', unsafe_allow_html=True)
 
         res_tabs = st.tabs(["📈 Resumen", "📊 Gráficos", "🔍 Explorador", "📥 Descarga"])
 
@@ -3689,20 +3724,26 @@ def _render_docentes_tab(excel_bytes):
 
 
 def _style_excel_workbook(excel_bytes):
-    """Aplica formato profesional a un Excel existente (headers, CLP, totales).
+    """Aplica formato profesional a un Excel existente (headers, CLP, totales, colores por grupo).
+
+    En la hoja BRP_DISTRIBUIDO:
+    - Columnas DAEM_RECON_* y CPEIP_RECON_* → azul (Reconocimiento)
+    - Columnas DAEM_TRAMO_* y CPEIP_TRAMO_* → verde (Tramo)
+    - Columna CPEIP_PRIOR_NORMAL → naranja (Prioritario)
+    - Autofiltro habilitado
+    - Leyenda de colores al final
 
     Returns:
         bytes del Excel estilizado.
     """
     from openpyxl import load_workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
 
     wb = load_workbook(BytesIO(excel_bytes))
     header_font = Font(bold=True, color='FFFFFF', size=10)
     header_fill = PatternFill(start_color='1E293B', end_color='1E293B', fill_type='solid')
     header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
-    total_font = Font(bold=True, size=10)
-    total_fill = PatternFill(start_color='F1F5F9', end_color='F1F5F9', fill_type='solid')
     thin_border = Border(
         left=Side(style='thin', color='E2E8F0'),
         right=Side(style='thin', color='E2E8F0'),
@@ -3711,25 +3752,57 @@ def _style_excel_workbook(excel_bytes):
     )
     clp_format = '#,##0'
 
+    # Color fills para grupos de columnas BRP
+    fill_recon = PatternFill(start_color='DBEAFE', end_color='DBEAFE', fill_type='solid')  # azul claro
+    fill_tramo = PatternFill(start_color='D1FAE5', end_color='D1FAE5', fill_type='solid')  # verde claro
+    fill_prior = PatternFill(start_color='FFEDD5', end_color='FFEDD5', fill_type='solid')  # naranja claro
+    header_recon = PatternFill(start_color='2563EB', end_color='2563EB', fill_type='solid')  # azul
+    header_tramo = PatternFill(start_color='059669', end_color='059669', fill_type='solid')  # verde
+    header_prior = PatternFill(start_color='EA580C', end_color='EA580C', fill_type='solid')  # naranja
+
+    # Columnas que pertenecen a cada grupo
+    RECON_COLS = {'DAEM_RECON_SEP', 'DAEM_RECON_PIE', 'DAEM_RECON_NORMAL',
+                  'CPEIP_RECON_SEP', 'CPEIP_RECON_PIE', 'CPEIP_RECON_NORMAL'}
+    TRAMO_COLS = {'DAEM_TRAMO_SEP', 'DAEM_TRAMO_PIE', 'DAEM_TRAMO_NORMAL',
+                  'CPEIP_TRAMO_SEP', 'CPEIP_TRAMO_PIE', 'CPEIP_TRAMO_NORMAL'}
+    PRIOR_COLS = {'CPEIP_PRIOR_SEP', 'CPEIP_PRIOR_PIE', 'CPEIP_PRIOR_NORMAL'}
+
     for ws in wb.worksheets:
         if ws.max_row < 2:
             continue
 
-        # Detectar columnas monetarias (numéricas, no horas/conteos)
+        is_brp_sheet = ws.title == 'BRP_DISTRIBUIDO' or ws.title not in (
+            'RESUMEN_POR_RBD', 'REVISAR', 'RESUMEN_GENERAL', 'MULTI_ESTABLECIMIENTO'
+        )
+
+        # Detectar columnas monetarias y grupos de color
         money_cols = set()
+        color_map = {}  # col_idx -> (header_fill, data_fill)
         headers = {}
         for col_idx in range(1, ws.max_column + 1):
             cell = ws.cell(row=1, column=col_idx)
             col_name = str(cell.value or '')
             headers[col_idx] = col_name
+
+            # Determinar grupo de color
+            if col_name in RECON_COLS:
+                color_map[col_idx] = (header_recon, fill_recon)
+            elif col_name in TRAMO_COLS:
+                color_map[col_idx] = (header_tramo, fill_tramo)
+            elif col_name in PRIOR_COLS:
+                color_map[col_idx] = (header_prior, fill_prior)
+
             # Header styling
-            cell.font = header_font
-            cell.fill = header_fill
+            if col_idx in color_map:
+                cell.font = Font(bold=True, color='FFFFFF', size=10)
+                cell.fill = color_map[col_idx][0]
+            else:
+                cell.font = header_font
+                cell.fill = header_fill
             cell.alignment = header_align
             cell.border = thin_border
 
             if col_name not in NON_MONEY_COLS and col_name not in ('RBD', 'MES', 'MES_NUM', 'MOTIVO', 'DETALLE', 'ACCION', 'RUT', 'NOMBRE', 'APELLIDOS', 'NOMBRE_COMPLETO', 'ESCUELA', 'MULTI_ESTABLECIMIENTO', 'TIPO_FILA', 'TRAMO'):
-                # Verificar si la col tiene números
                 sample_cell = ws.cell(row=2, column=col_idx)
                 if isinstance(sample_cell.value, (int, float)):
                     money_cols.add(col_idx)
@@ -3742,9 +3815,10 @@ def _style_excel_workbook(excel_bytes):
                 if col_idx in money_cols:
                     cell.number_format = clp_format
                     cell.alignment = Alignment(horizontal='right')
+                if col_idx in color_map:
+                    cell.fill = color_map[col_idx][1]
 
         # Auto-ancho
-        from openpyxl.utils import get_column_letter
         for col_idx in range(1, ws.max_column + 1):
             max_len = len(str(headers.get(col_idx, '')))
             for row_idx in range(2, min(ws.max_row + 1, 52)):
@@ -3758,6 +3832,27 @@ def _style_excel_workbook(excel_bytes):
 
         # Freeze header
         ws.freeze_panes = ws.cell(row=2, column=1)
+
+        # Autofiltro en todas las hojas
+        if ws.max_column > 0 and ws.max_row > 1:
+            ws.auto_filter.ref = f"A1:{get_column_letter(ws.max_column)}{ws.max_row}"
+
+        # Leyenda de colores (solo en BRP_DISTRIBUIDO y hojas por escuela)
+        if color_map and ws.title != 'RESUMEN_POR_RBD':
+            legend_row = ws.max_row + 3
+            ws.cell(row=legend_row, column=1, value='LEYENDA DE COLORES:').font = Font(bold=True, size=11)
+
+            legend_items = [
+                (fill_recon, header_recon, 'Reconocimiento (DAEM subvención + CPEIP transferencia)'),
+                (fill_tramo, header_tramo, 'Tramo (DAEM subvención + CPEIP transferencia)'),
+                (fill_prior, header_prior, 'Prioritario (CPEIP transferencia directa)'),
+            ]
+            for i, (data_fill, hdr_fill, desc) in enumerate(legend_items):
+                row = legend_row + 1 + i
+                color_cell = ws.cell(row=row, column=1)
+                color_cell.fill = data_fill
+                color_cell.border = thin_border
+                ws.cell(row=row, column=2, value=desc).font = Font(size=10)
 
     buf = BytesIO()
     wb.save(buf)
@@ -3839,23 +3934,35 @@ def _display_lote_anual_results(stats, excel_data, anio):
 
     st.markdown("---")
 
-    # Métricas principales siempre visibles (fuera de tabs)
+    # Métricas principales siempre visibles con color coding
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.metric("SEP", fmt_clp(brp_sep))
-        if brp_total > 0:
-            st.badge(f"{100*brp_sep/brp_total:.1f}%", color="blue")
+        with st.container(border=True):
+            st.markdown('<div class="metric-sep">', unsafe_allow_html=True)
+            st.metric("SEP", fmt_clp(brp_sep))
+            if brp_total > 0:
+                st.badge(f"{100*brp_sep/brp_total:.1f}%", color="blue")
+            st.markdown('</div>', unsafe_allow_html=True)
     with c2:
-        st.metric("PIE", fmt_clp(brp_pie))
-        if brp_total > 0:
-            st.badge(f"{100*brp_pie/brp_total:.1f}%", color="green")
+        with st.container(border=True):
+            st.markdown('<div class="metric-pie">', unsafe_allow_html=True)
+            st.metric("PIE", fmt_clp(brp_pie))
+            if brp_total > 0:
+                st.badge(f"{100*brp_pie/brp_total:.1f}%", color="green")
+            st.markdown('</div>', unsafe_allow_html=True)
     with c3:
-        st.metric("NORMAL", fmt_clp(brp_normal))
-        if brp_total > 0:
-            st.badge(f"{100*brp_normal/brp_total:.1f}%", color="orange")
+        with st.container(border=True):
+            st.markdown('<div class="metric-normal">', unsafe_allow_html=True)
+            st.metric("NORMAL", fmt_clp(brp_normal))
+            if brp_total > 0:
+                st.badge(f"{100*brp_normal/brp_total:.1f}%", color="orange")
+            st.markdown('</div>', unsafe_allow_html=True)
     with c4:
-        st.metric("TOTAL", fmt_clp(brp_total))
-        st.badge("BRP Total", color="violet")
+        with st.container(border=True):
+            st.markdown('<div class="metric-total">', unsafe_allow_html=True)
+            st.metric("TOTAL", fmt_clp(brp_total))
+            st.badge("BRP Total", color="violet")
+            st.markdown('</div>', unsafe_allow_html=True)
 
     res_tabs = st.tabs(["📈 Resumen", "🏫 Por Establecimiento", "👥 Docentes", "📋 Horas", "📊 Gráficos", "🔍 Explorador", "⚠️ Alertas", "📥 Descarga"])
 

@@ -72,7 +72,7 @@ remupro_v3/
 ### Opcion 1: Streamlit (desarrollo)
 
 ```bash
-git clone https://github.com/leftra123/remupro_v3.git
+git clone https://github.com/eaguayo-dev/remupro_v3.git
 cd remupro_v3
 python3 -m venv .venv
 source .venv/bin/activate        # macOS/Linux
