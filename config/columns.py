@@ -35,7 +35,8 @@ SPECIAL_SALARY_COLUMNS: List[str] = [
     'Antic SEG.INV.SOB.',
     'SEG.CESANTIA EMP.',
     'MUTUAL',
-    'Aporte adicional empleador'
+    'Aporte adicional empleador',
+    'Aporte Adicional AFP'
 ]
 
 # Columnas de salarios y beneficios para prorrateo
