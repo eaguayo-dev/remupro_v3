@@ -50,7 +50,9 @@ class BaseProcessor(ABC):
     def __init__(self):
         self.config = ColumnConfig()
         self.logger = logging.getLogger(self.__class__.__name__)
-    
+        # Alertas de columnas generadas durante el procesamiento (para la UI).
+        self.column_alerts: List[dict] = []
+
     # ==================== VALIDACIÓN ====================
     
     SUPPORTED_FORMATS = ('.xlsx', '.xls', '.csv')
@@ -79,7 +81,40 @@ class BaseProcessor(ABC):
             raise ColumnMissingError(
                 f"Hoja '{sheet_name}' - Faltan columnas: {', '.join(sorted(missing))}"
             )
-    
+
+    def get_column_alerts(self) -> List[dict]:
+        """Retorna las alertas de columnas generadas durante el procesamiento."""
+        return self.column_alerts
+
+    def _record_missing_special_columns(
+        self, requested: List[str], available: List[str]
+    ) -> None:
+        """
+        Registra una alerta por cada columna ESPECIAL esperada que no se encontró.
+
+        Solo se avisan las columnas de SPECIAL_SALARY_COLUMNS (haberes/aportes que
+        deberían venir siempre). Las de SALARY_BENEFIT_COLUMNS se omiten en silencio
+        porque legítimamente no aplican a todos los colegios/docentes y avisarlas
+        generaría ruido. Evita duplicados si se llama varias veces en un mismo run.
+        """
+        available_set = set(available)
+        for col in requested:
+            if col in available_set or col not in SPECIAL_SALARY_COLUMNS:
+                continue
+            if any(a.get('columna_key') == col for a in self.column_alerts):
+                continue
+            self.column_alerts.append({
+                'nivel': 'warning',
+                'tipo': 'columna_salario_faltante',
+                'columna_key': col,
+                'columna_nombre': col,
+                'mensaje': (
+                    f"No se encontró la columna especial '{col}'. "
+                    f"No se generará su prorrateo en el resultado."
+                ),
+            })
+            self.logger.warning(f"Columna especial no encontrada: {col}")
+
     # ==================== CARGA DE DATOS ====================
     
     def load_excel_with_retry(
@@ -263,7 +298,8 @@ class BaseProcessor(ABC):
         missing = set(columns) - set(available)
         if missing:
             self.logger.debug(f"Columnas no encontradas: {missing}")
-        
+        self._record_missing_special_columns(columns, available)
+
         return df
     
     def validate_hours(

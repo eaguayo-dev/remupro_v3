@@ -152,6 +152,7 @@ class PIEProcessor(BaseProcessor):
             df = df.loc[:, ~df.columns.duplicated(keep='first')]
 
         available = get_available_columns(df, SPECIAL_SALARY_COLUMNS)
+        self._record_missing_special_columns(SPECIAL_SALARY_COLUMNS, available)
 
         for col in available:
             valor_por_hora = df[col] / df['TOTAL HORAS POR DOCENTE']
