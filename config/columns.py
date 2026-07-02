@@ -343,18 +343,34 @@ def detect_month_from_filename(filename: str) -> Optional[str]:
     """
     Detecta el mes (01-12) a partir del nombre de archivo.
 
-    Busca nombres completos ('enero', 'febrero') y abreviados ('ene', 'feb').
+    Orden de prioridad:
+      1. Número al INICIO del nombre (convención 'N TIPO.xlsx', ej. '1 SEP.xlsx'
+         → enero, '6 SNPIE.xlsx' → junio). Tiene prioridad porque en este dominio
+         'SEP'/'PIE'/'SN' del nombre son TIPOS de subvención, no meses.
+      2. Nombre completo del mes ('enero', 'febrero', …).
+      3. Abreviatura ('ene', 'feb', …) — EXCEPTO 'sep', que aquí significa la
+         subvención SEP y no septiembre (para septiembre usar el nombre completo).
+
     Retorna None si no detecta mes.
     """
     name = str(filename).lower()
-    # Primero intentar nombres completos (para evitar falsos positivos con abreviados)
+    # 1) Número inicial como mes. Solo 1-2 dígitos y en rango 1-12; el (?!\d)
+    #    evita capturar un año ('2026 SEP.xlsx' NO es mes 20/2). Si hay un número
+    #    inicial fuera de rango, se ignora y se sigue con nombre/abreviatura.
+    m = re.match(r'^\s*(\d{1,2})(?!\d)', name)
+    if m:
+        n = int(m.group(1))
+        if 1 <= n <= 12:
+            return f"{n:02d}"
+    # 2) Nombres completos (para evitar falsos positivos con abreviados).
     for mes_name, mes_num in MESES_FULL_MAP.items():
         if mes_name in name:
             return mes_num
-    # Luego abreviados (con lookbehind/lookahead para evitar falsos positivos
-    # como "sostenedor" → "ene". Se usa [a-záéíóúñ] en vez de \b porque
-    # \b trata '_' como caracter de palabra y no matchearía 'archivo_ene_2026')
+    # 3) Abreviados (lookbehind/lookahead para no matchear 'sostenedor' → 'ene').
+    #    Se omite 'sep' porque colisiona con el tipo de subvención SEP.
     for mes_abbr, mes_num in MESES_MAP.items():
+        if mes_abbr == 'sep':
+            continue
         if re.search(r'(?<![a-záéíóúñ])' + mes_abbr + r'(?![a-záéíóúñ])', name):
             return mes_num
     return None
@@ -382,9 +398,12 @@ def detect_file_type(filename: str) -> Optional[str]:
         clean = clean.replace(mes, '')
     if clean.startswith('web'):
         return 'web'
-    if clean.startswith('sep') or '_sep' in clean or ' sep ' in f' {clean} ':
+    # 'sep' / 'sn' como TOKEN (tolera '1 SEP.xlsx', 'sep_enero', 'sep.xlsx'…).
+    # El lookbehind/lookahead evita falsos positivos: 'separata' no es SEP y
+    # 'snpie' no matchea 'sn' (queda para PIE por contener 'pie').
+    if re.search(r'(?<![a-z])sep(?![a-z])', clean):
         return 'sep'
-    if clean.startswith('sn') or 'pie' in clean or 'normal' in clean:
+    if re.search(r'(?<![a-z])sn(?![a-z])', clean) or 'pie' in clean or 'normal' in clean:
         return 'pie'
     if 'eib' in clean:
         return 'eib'

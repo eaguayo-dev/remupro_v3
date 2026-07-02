@@ -101,6 +101,24 @@ class TestDetectFileType:
     def test_unknown(self):
         assert detect_file_type("datos_random.xlsx") is None
 
+    def test_numero_espacio_sep(self):
+        """Convención 'N SEP.xlsx' (mes por número) debe detectarse como SEP."""
+        assert detect_file_type("1 SEP.xlsx") == "sep"
+        assert detect_file_type("6 SEP.xlsx") == "sep"
+
+    def test_numero_espacio_snpie(self):
+        """'N SNPIE.xlsx' debe detectarse como PIE (contiene 'pie')."""
+        assert detect_file_type("1 SNPIE.xlsx") == "pie"
+        assert detect_file_type("3 SNPIE.xlsx") == "pie"
+
+    def test_sn_solo(self):
+        """'N SN.xlsx' (SN sin PIE) también debe caer en PIE/Normal."""
+        assert detect_file_type("2 SN.xlsx") == "pie"
+
+    def test_separata_no_es_sep(self):
+        """Una palabra que contiene 'sep' pero no es SEP no debe matchear."""
+        assert detect_file_type("separata_datos.xlsx") is None
+
 
 # ── detect_month_from_filename ─────────────────────────────────────
 
@@ -116,6 +134,21 @@ class TestDetectMonth:
 
     def test_no_month(self):
         assert detect_month_from_filename("datos.xlsx") is None
+
+    def test_numero_inicial_como_mes(self):
+        """Número al inicio del nombre se interpreta como mes (1..12)."""
+        assert detect_month_from_filename("1 SNPIE.xlsx") == "01"
+        assert detect_month_from_filename("6 SEP.xlsx") == "06"
+        assert detect_month_from_filename("12 SEP.xlsx") == "12"
+
+    def test_numero_inicial_fuera_de_rango(self):
+        """Un número inicial fuera de 1..12 no es mes."""
+        assert detect_month_from_filename("13 SEP.xlsx") is None
+        assert detect_month_from_filename("0 SEP.xlsx") is None
+
+    def test_anio_no_es_mes(self):
+        """Un año (4 dígitos) al inicio no debe tomarse como mes."""
+        assert detect_month_from_filename("2026 SEP.xlsx") is None
 
 
 # ── detect_year_from_filename ──────────────────────────────────────
