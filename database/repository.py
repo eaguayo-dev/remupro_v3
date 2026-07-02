@@ -1,5 +1,16 @@
 """
 Repositorio para operaciones CRUD sobre la base de datos de BRP.
+
+Encapsula todo el acceso a la base de datos del flujo MENSUAL: guardar un
+procesamiento (a partir de un DataFrame ya calculado), consultar meses
+disponibles, leer datos para comparaciones/informes y gestionar preferencias
+de alertas de columnas. La app no toca SQLAlchemy directamente: pasa por aquí.
+
+PATRÓN DE SESIONES:
+    Cada método abre su propia sesión con _get_session(), opera y la cierra en
+    un 'finally'. Las operaciones de escritura hacen commit y, ante error,
+    rollback + re-raise (o retornan False, según el método). Esto mantiene las
+    sesiones cortas y evita fugas de conexión.
 """
 
 import re
@@ -13,7 +24,9 @@ from sqlalchemy.orm import sessionmaker, Session
 
 from database.models import Base, ProcesamientoMensual, DocenteMensual, ColumnAlertPreference
 
-# Strict pattern for month identifiers to prevent injection
+# Patrón estricto para identificadores de mes ("YYYY-MM"). Se valida contra él
+# antes de usar el mes en consultas, como defensa ante inyección / valores mal
+# formados que podrían llegar desde la interfaz.
 _MES_PATTERN = re.compile(r"^\d{4}-\d{2}$")
 
 
@@ -35,6 +48,8 @@ class BRPRepository:
         self.db_path = Path(db_path)
         self._ensure_data_dir()
 
+        # check_same_thread=False permite usar la conexión SQLite desde hilos
+        # distintos (necesario cuando la app web atiende varias peticiones).
         self.engine = create_engine(
             f"sqlite:///{self.db_path}",
             echo=False,
@@ -42,7 +57,9 @@ class BRPRepository:
         )
         self.SessionLocal = sessionmaker(bind=self.engine)
 
-        # Crear tablas si no existen
+        # Crear tablas que aún no existan y aplicar migraciones ligeras.
+        # create_all NO altera tablas existentes, por eso _migrate() se encarga
+        # de agregar columnas nuevas a bases de datos antiguas.
         Base.metadata.create_all(self.engine)
         self._migrate()
 
@@ -51,7 +68,12 @@ class BRPRepository:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _migrate(self) -> None:
-        """Add missing columns to existing tables (lightweight migration)."""
+        """Agrega columnas faltantes a tablas existentes (migración ligera).
+
+        En vez de usar una herramienta de migraciones, se inspecciona la tabla
+        y se hace ALTER TABLE ADD COLUMN solo para las columnas nuevas que aún no
+        estén presentes. Es idempotente: correrlo varias veces no causa daño.
+        """
         from sqlalchemy import text, inspect as sa_inspect
         insp = sa_inspect(self.engine)
         cols = {c["name"] for c in insp.get_columns("procesamientos")}
@@ -66,7 +88,11 @@ class BRPRepository:
         return self.SessionLocal()
 
     def _validate_mes(self, mes: str) -> str:
-        """Validate that mes matches YYYY-MM format to prevent injection."""
+        """Valida que 'mes' tenga formato YYYY-MM (evita inyección/entradas malas).
+
+        Lanza ValueError si no calza con el patrón. Todos los métodos que reciben
+        un mes lo pasan primero por aquí.
+        """
         mes = str(mes).strip()
         if not _MES_PATTERN.match(mes):
             raise ValueError(
@@ -83,6 +109,13 @@ class BRPRepository:
         """
         Guarda un procesamiento mensual completo.
 
+        Toma el DataFrame YA CALCULADO por el procesador (con columnas BRP_*,
+        RUT_NORM, etc.), computa las estadísticas agregadas, crea la fila
+        ProcesamientoMensual y luego una fila DocenteMensual por docente.
+
+        Comportamiento upsert: si ya existía un procesamiento para ese mes, se
+        elimina primero (junto con sus docentes por cascada) y se reemplaza.
+
         Args:
             mes: Identificador del mes (ej: "2024-01")
             df: DataFrame con los resultados del procesamiento
@@ -95,13 +128,16 @@ class BRPRepository:
         session = self._get_session()
 
         try:
-            # Eliminar procesamiento anterior del mismo mes si existe
+            # Eliminar procesamiento anterior del mismo mes si existe (upsert:
+            # reprocesar un mes sustituye por completo el resultado anterior).
             anterior = session.query(ProcesamientoMensual).filter_by(mes=mes).first()
             if anterior:
                 session.delete(anterior)
                 session.commit()
 
-            # Calcular estadísticas
+            # Calcular estadísticas agregadas del mes. Todas las sumas usan
+            # 'if col in df.columns else 0' porque una columna puede no existir
+            # (planilla sin ese concepto) y no debe romper el guardado.
             brp_sep = df['BRP_SEP'].sum() if 'BRP_SEP' in df.columns else 0
             brp_pie = df['BRP_PIE'].sum() if 'BRP_PIE' in df.columns else 0
             brp_normal = df['BRP_NORMAL'].sum() if 'BRP_NORMAL' in df.columns else 0
@@ -124,25 +160,32 @@ class BRPRepository:
             daem_total = sum(df[col].sum() for col in daem_cols if col in df.columns)
             cpeip_total = sum(df[col].sum() for col in cpeip_cols if col in df.columns)
 
-            # Detectar docentes EIB (BRP_TOTAL = 0)
+            # Docentes con BRP en $0: se cuentan como posibles EIB (ver modelo).
             docentes_eib = len(df[df['BRP_TOTAL'] == 0]) if 'BRP_TOTAL' in df.columns else 0
 
-            # Identificar columna de RBD
+            # El nombre exacto de la columna de RBD/RUT varía entre planillas, así
+            # que se detecta por coincidencia parcial del nombre en lugar de
+            # asumir un encabezado fijo.
             rbd_col = None
             for col in df.columns:
                 if 'rbd' in col.lower():
                     rbd_col = col
                     break
 
+            # nunique() cuenta establecimientos distintos (docentes multi-colegio
+            # aparecen en varias filas pero con distinto RBD).
             total_establecimientos = df[rbd_col].nunique() if rbd_col else 0
 
-            # Identificar columna de RUT
+            # Se prefiere la columna canónica 'RUT_NORM' (RUT ya normalizado); si
+            # no está, se cae a cualquier columna cuyo nombre contenga 'rut'.
             rut_col = None
             for col in df.columns:
                 if col == 'RUT_NORM' or 'rut' in col.lower():
                     rut_col = col
                     break
 
+            # Docentes únicos por RUT; si no hay columna de RUT, se usa el total
+            # de filas como aproximación.
             total_docentes = df[rut_col].nunique() if rut_col else len(df)
 
             # Crear procesamiento
@@ -161,15 +204,17 @@ class BRPRepository:
                 notas=notas
             )
             session.add(procesamiento)
-            session.flush()  # Para obtener el ID
+            session.flush()  # flush (no commit) para obtener el ID autogenerado
 
-            # Guardar docentes
+            # Guardar la fila de cada docente enlazada a este procesamiento.
             self._guardar_docentes(session, procesamiento.id, df, rut_col, rbd_col)
 
             session.commit()
             return procesamiento
 
         except Exception as e:
+            # Ante cualquier fallo se revierte todo (procesamiento + docentes) para
+            # no dejar un mes a medio guardar, y se re-lanza el error.
             session.rollback()
             raise e
         finally:
@@ -183,8 +228,15 @@ class BRPRepository:
         rut_col: str,
         rbd_col: str
     ) -> None:
-        """Guarda los datos de docentes individuales."""
-        # Identificar columnas de nombre
+        """Guarda los datos de docentes individuales (una fila por docente).
+
+        Como los nombres de columna del DataFrame no son fijos, primero se
+        detectan las columnas de nombre / tipo de pago / tramo por coincidencia
+        de texto, y luego se recorre el DataFrame creando un DocenteMensual.
+        """
+        # Detectar la columna de nombre. Se prefiere una que contenga tanto
+        # 'nombre' como 'completo' (nombre completo); si no, la última que
+        # contenga 'nombre'.
         nombre_col = None
         for col in df.columns:
             if 'nombre' in col.lower() and 'completo' in col.lower():
@@ -207,9 +259,11 @@ class BRPRepository:
 
         for _, row in df.iterrows():
             rut = row.get(rut_col, '') if rut_col else ''
+            # Sin RUT no se puede identificar al docente: se omite la fila.
             if not rut:
                 continue
 
+            # 'or 0' convierte None/NaN a 0 para no propagar nulos a la BD.
             brp_total = row.get('BRP_TOTAL', 0) or 0
 
             docente = DocenteMensual(
@@ -229,6 +283,7 @@ class BRPRepository:
                 brp_tramo_sep=row.get('BRP_TRAMO_SEP', 0) or 0,
                 brp_tramo_pie=row.get('BRP_TRAMO_PIE', 0) or 0,
                 brp_tramo_normal=row.get('BRP_TRAMO_NORMAL', 0) or 0,
+                # Marca EIB por regla: BRP total en 0 => probable docente EIB.
                 es_eib=(brp_total == 0)
             )
             session.add(docente)
@@ -382,6 +437,8 @@ class BRPRepository:
             raise ValueError(f"Estado invalido: '{estado}'. Use default/ignore/important.")
         session = self._get_session()
         try:
+            # Upsert: si ya existe preferencia para la columna se actualiza su
+            # estado; si no, se crea una nueva.
             pref = session.query(ColumnAlertPreference)\
                 .filter_by(columna_key=columna_key)\
                 .first()
@@ -560,20 +617,22 @@ class BRPRepository:
                 return []
 
             from sqlalchemy import func
-            # Subquery: RUTs con 2+ RBDs distintos
+            # Subconsulta: RUTs que aparecen en 2+ establecimientos (RBD) distintos.
+            # Identifica a los docentes que trabajan en más de un colegio.
             sub = session.query(DocenteMensual.rut)\
                 .filter_by(procesamiento_id=proc.id)\
                 .group_by(DocenteMensual.rut)\
                 .having(func.count(func.distinct(DocenteMensual.rbd)) >= 2)\
                 .subquery()
 
+            # Traer todas las filas de esos docentes (una por establecimiento).
             docentes = session.query(DocenteMensual)\
                 .filter_by(procesamiento_id=proc.id)\
                 .filter(DocenteMensual.rut.in_(session.query(sub.c.rut)))\
                 .order_by(DocenteMensual.rut, DocenteMensual.rbd)\
                 .all()
 
-            # Agrupar por RUT
+            # Agrupar en memoria por RUT, acumulando sus establecimientos y totales.
             grouped: Dict[str, Dict[str, Any]] = {}
             for d in docentes:
                 if d.rut not in grouped:

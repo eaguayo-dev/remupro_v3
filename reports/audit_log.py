@@ -1,6 +1,15 @@
 """
 Sistema de auditoría para capturar logs durante el procesamiento.
 Permite registrar eventos, advertencias y errores de forma estructurada.
+
+Se diferencia del logging tradicional en que los eventos se ACUMULAN EN MEMORIA
+(lista de AuditEntry) en lugar de solo escribirse a consola. Así, al terminar el
+procesamiento, se pueden filtrar, resumir y volcar al informe Word o a un
+DataFrame para que el equipo revise qué pasó (columnas faltantes, valores
+inusuales, docentes EIB, etc.).
+
+Niveles: INFO / WARNING / ERROR. Tipos: constantes TIPO_* de la clase AuditLog,
+que categorizan el evento (columna_faltante, valor_inusual, docente_eib, ...).
 """
 
 from dataclasses import dataclass, field
@@ -11,20 +20,23 @@ import pandas as pd
 
 @dataclass
 class AuditEntry:
-    """Entrada individual del log de auditoría."""
+    """Entrada individual del log de auditoría (un evento registrado)."""
     timestamp: datetime
     nivel: str  # INFO, WARNING, ERROR
     tipo: str   # columna_faltante, valor_inusual, docente_eib, etc.
     mensaje: str
+    # Contexto extra libre del evento (ej: rut, columna, valor). Se aplana en
+    # to_dict() junto a los campos fijos para poder llevarlo a un DataFrame.
     datos: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convierte la entrada a diccionario."""
+        """Convierte la entrada a diccionario (campos fijos + datos extra)."""
         return {
             'timestamp': self.timestamp.isoformat(),
             'nivel': self.nivel,
             'tipo': self.tipo,
             'mensaje': self.mensaje,
+            # Desempaqueta el contexto extra como columnas adicionales.
             **self.datos
         }
 
@@ -37,18 +49,21 @@ class AuditLog:
     incluirlos en informes y facilitar la revisión.
     """
 
-    # Tipos de eventos predefinidos
-    TIPO_COLUMNA_FALTANTE = 'columna_faltante'
-    TIPO_VALOR_INUSUAL = 'valor_inusual'
-    TIPO_DOCENTE_EIB = 'docente_eib'
-    TIPO_EXCEDE_HORAS = 'excede_horas'
-    TIPO_SIN_LIQUIDACION = 'sin_liquidacion'
-    TIPO_VALIDACION = 'validacion'
-    TIPO_PROCESO = 'proceso'
-    TIPO_ARCHIVO = 'archivo'
+    # Tipos de eventos predefinidos. Usar estas constantes (en vez de strings
+    # sueltos) para poder filtrar de forma fiable con get_by_tipo().
+    TIPO_COLUMNA_FALTANTE = 'columna_faltante'   # falta una columna esperada
+    TIPO_VALOR_INUSUAL = 'valor_inusual'         # monto/valor fuera de lo normal
+    TIPO_DOCENTE_EIB = 'docente_eib'             # docente sin BRP (posible EIB)
+    TIPO_EXCEDE_HORAS = 'excede_horas'           # supera el máximo de horas
+    TIPO_SIN_LIQUIDACION = 'sin_liquidacion'     # docente sin liquidación asociada
+    TIPO_VALIDACION = 'validacion'               # chequeos de validación
+    TIPO_PROCESO = 'proceso'                     # hitos del procesamiento
+    TIPO_ARCHIVO = 'archivo'                     # eventos de lectura de archivos
 
     def __init__(self):
+        # Lista acumulativa de eventos en orden de registro.
         self.entries: List[AuditEntry] = []
+        # Momento de inicio, fijado por start(); se usa para medir la duración.
         self._start_time: Optional[datetime] = None
 
     def start(self) -> None:
@@ -84,6 +99,8 @@ class AuditLog:
         Returns:
             La entrada creada
         """
+        # nivel.upper() normaliza para que 'warning'/'WARNING' sean equivalentes.
+        # **datos recoge cualquier contexto extra pasado por palabra clave.
         entry = AuditEntry(
             timestamp=datetime.now(),
             nivel=nivel.upper(),
@@ -167,7 +184,12 @@ class AuditLog:
         }
 
     def merge(self, other: 'AuditLog') -> None:
-        """Combina otro AuditLog en este."""
+        """Combina otro AuditLog en este.
+
+        Útil cuando cada archivo/hoja se procesa con su propio log y luego se
+        consolidan en uno solo. Tras unir, se reordena por timestamp para que la
+        secuencia de eventos quede cronológica pese a venir de distintos orígenes.
+        """
         self.entries.extend(other.entries)
         # Reordenar por timestamp
         self.entries.sort(key=lambda e: e.timestamp)

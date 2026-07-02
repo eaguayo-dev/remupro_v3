@@ -17,8 +17,9 @@ Cómo agregar una actualización (lo único que necesitas recordar cada mes):
     3. (Opcional) Refleja lo mismo en CHANGELOG.md para el registro humano.
 
     El aviso en la app usa 'version' + 'date' para saber si es "nuevo". Cuando
-    el usuario aprieta "Ya lo vi", su navegador recuerda ESTA versión y el aviso
-    no vuelve a salir hasta que subas a una versión mayor.
+    el usuario aprieta "Ya lo vi", el aviso se oculta durante esa sesión; si
+    refresca o reabre la página vuelve a aparecer. Al subir la versión aquí, el
+    aviso reaparece para todos aunque lo hubieran descartado antes.
 """
 
 from typing import List, Dict

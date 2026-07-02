@@ -1,6 +1,22 @@
 """
 Configuración centralizada de columnas para procesamiento de remuneraciones.
 Esto evita duplicación y facilita el mantenimiento.
+
+QUÉ HACE ESTE MÓDULO:
+    - Define los NOMBRES EXACTOS de las columnas tal como aparecen en las
+      planillas Excel de liquidaciones y en el archivo web del MINEDUC. Estos
+      nombres deben coincidir carácter por carácter con la planilla; si el
+      colegio/DAEM cambia un título de columna, hay que actualizarlo aquí.
+    - Clasifica las columnas en dos grandes grupos:
+        * SPECIAL_SALARY_COLUMNS: montos que siempre están presentes y que se
+          prorratean; en contratos PIE el monto se divide en las partes PIE/SN.
+        * SALARY_BENEFIT_COLUMNS: haberes/descuentos opcionales (pueden faltar).
+    - Provee utilidades para normalizar/formatear RUT chileno, detectar el mes y
+      el tipo de archivo a partir del nombre, y limpiar encabezados de columnas.
+
+POR QUÉ IMPORTA:
+    Es la única fuente de verdad de los nombres de columna. Centralizar aquí
+    evita que cada procesador tenga su propia lista y se desincronicen.
 """
 
 import re
@@ -11,23 +27,33 @@ import pandas as pd
 
 @dataclass(frozen=True)
 class ColumnConfig:
-    """Configuración inmutable de columnas para procesadores."""
-    
+    """Configuración inmutable de columnas para procesadores.
+
+    Se usa 'frozen=True' para que estos valores no puedan modificarse en tiempo
+    de ejecución: son constantes de negocio (nombres de columna, límite de horas)
+    que no deben cambiar durante un procesamiento.
+    """
+
     # Columnas requeridas por hoja
     REQUIRED_HORAS: FrozenSet[str] = frozenset({'Rut', 'Nombre'})
     REQUIRED_TOTAL: FrozenSet[str] = frozenset({'Rut'})
     
-    # Columnas de horas específicas por tipo
+    # Columnas de horas específicas por tipo de subvención.
+    # 'SN' = horas normales/subvención general; 'Jornada' se usa para EIB.
     SEP_HOURS_COL: str = 'SEP'
     PIE_HOURS_COL: str = 'PIE'
     SN_HOURS_COL: str = 'SN'
     EIB_HOURS_COL: str = 'Jornada'
 
-    # Límite máximo de horas permitidas
+    # Límite máximo de horas permitidas por contrato docente (jornada completa).
+    # Sobre este valor se marca al docente para revisión (excede_horas).
     MAX_HOURS: int = 44
 
 
-# Columnas especiales que requieren cálculo diferenciado
+# Columnas especiales que requieren cálculo diferenciado.
+# Son montos que SIEMPRE están presentes en la liquidación y que se prorratean.
+# En contratos PIE, el monto se reparte entre las partes PIE y SN (normal).
+# IMPORTANTE: cada string debe coincidir EXACTAMENTE con el título en la planilla.
 SPECIAL_SALARY_COLUMNS: List[str] = [
     'SUELDO BASE',
     'RBMN (SUELDO BASE)',
@@ -39,7 +65,10 @@ SPECIAL_SALARY_COLUMNS: List[str] = [
     'Aporte Adicional AFP'
 ]
 
-# Columnas de salarios y beneficios para prorrateo
+# Columnas de salarios y beneficios para prorrateo.
+# A diferencia de SPECIAL_SALARY_COLUMNS, estas son OPCIONALES: pueden o no
+# aparecer en una liquidación dada (dependen del mes, del docente y del colegio).
+# El procesador solo usa las que existan realmente en el DataFrame.
 SALARY_BENEFIT_COLUMNS: List[str] = [
     # Asignaciones principales
     'ASIGNACION RESPONSABILIDAD', 'CONDICION DIFICIL', 'COMPLEMENTO DE ZONA',
@@ -78,7 +107,12 @@ SALARY_BENEFIT_COLUMNS: List[str] = [
     'COLEGIO PROFESORES 1% HABER', 'Ajuste IMPOSICIONES'
 ]
 
-# Columnas del archivo web_sostenedor (MINEDUC)
+# Columnas del archivo web_sostenedor (MINEDUC).
+# Mapea una CLAVE INTERNA corta (usada en el código) al NOMBRE EXACTO de la
+# columna tal como viene en el Excel descargado del portal del sostenedor.
+# Ejemplo: se usa la clave 'rbd' internamente, pero en el archivo el encabezado
+# es 'Rbd (Establecimiento)'. Si el MINEDUC renombra una columna, se actualiza
+# aquí el valor (lado derecho), no la clave.
 WEB_SOSTENEDOR_COLUMNS: Dict[str, str] = {
     'rbd': 'Rbd (Establecimiento)',
     'rut': 'RUT (Docente)',
@@ -149,12 +183,25 @@ WEB_FRIENDLY_NAMES = {
 
 
 def get_available_columns(df, column_list: List[str]) -> List[str]:
-    """Retorna solo las columnas que existen en el DataFrame."""
+    """Retorna solo las columnas que existen en el DataFrame.
+
+    Sirve para filtrar listas como SALARY_BENEFIT_COLUMNS (columnas opcionales)
+    y quedarse únicamente con las que efectivamente vienen en la planilla,
+    evitando KeyError al acceder a columnas ausentes.
+    """
     return [col for col in column_list if col in df.columns]
 
 
 def normalize_rut(rut) -> str:
-    """Normaliza un RUT chileno removiendo puntos y guiones."""
+    """Normaliza un RUT chileno removiendo puntos y guiones.
+
+    Deja el RUT en un formato canónico (sin puntos, sin guion, sin espacios,
+    en mayúscula para el dígito verificador 'K'). Se usa como clave para cruzar
+    datos entre archivos (liquidaciones vs. web MINEDUC), donde el mismo RUT
+    puede venir escrito de formas distintas ('12.345.678-9', '12345678-9', etc.).
+    """
+    # pd.isna cubre NaN de pandas; el try/except protege ante tipos raros
+    # (listas, objetos) que harían fallar a pd.isna con TypeError/ValueError.
     try:
         if rut is None or pd.isna(rut):
             return ''
@@ -165,8 +212,13 @@ def normalize_rut(rut) -> str:
 
 
 def format_rut(rut) -> str:
-    """Formatea un RUT normalizado con guión: 12345678-9."""
+    """Formatea un RUT normalizado con guión: 12345678-9.
+
+    Inverso "amigable" de normalize_rut: se usa para MOSTRAR el RUT al usuario
+    (informes, tablas). Separa el dígito verificador (último carácter) del cuerpo.
+    """
     rut_str = normalize_rut(rut)
+    # Con menos de 2 caracteres no hay cuerpo + DV que separar; se devuelve tal cual.
     if len(rut_str) < 2:
         return rut_str
     return f"{rut_str[:-1]}-{rut_str[-1]}"
@@ -198,7 +250,12 @@ _EIB_KEYWORDS = ['EIB']
 
 
 def classify_contract(tipocontrato: str) -> str:
-    """Clasifica un tipo de contrato en SEP/PIE/EIB/NORMAL."""
+    """Clasifica un tipo de contrato en SEP/PIE/EIB/NORMAL.
+
+    Busca palabras clave dentro del texto del tipo de contrato. El orden de
+    verificación importa: primero SEP, luego PIE, luego EIB; si no matchea
+    ninguna, se asume 'NORMAL' (subvención general).
+    """
     tc = str(tipocontrato).upper().strip()
     if any(k in tc for k in _SEP_KEYWORDS):
         return 'SEP'
@@ -213,12 +270,14 @@ def classify_contract(tipocontrato: str) -> str:
 # Meses y periodos
 # ---------------------------------------------------------------------------
 
+# Abreviaturas de mes (3 letras) -> número de mes con cero a la izquierda.
 MESES_MAP: Dict[str, str] = {
     'ene': '01', 'feb': '02', 'mar': '03', 'abr': '04',
     'may': '05', 'jun': '06', 'jul': '07', 'ago': '08',
     'sep': '09', 'oct': '10', 'nov': '11', 'dic': '12',
 }
 
+# Nombres completos de mes -> número de mes con cero a la izquierda.
 MESES_FULL_MAP: Dict[str, str] = {
     'enero': '01', 'febrero': '02', 'marzo': '03', 'abril': '04',
     'mayo': '05', 'junio': '06', 'julio': '07', 'agosto': '08',
@@ -232,6 +291,10 @@ MESES_NUM_TO_NAME: Dict[str, str] = {v: k.capitalize() for k, v in MESES_FULL_MA
 def parse_periodo(periodo: str) -> Optional[str]:
     """
     Convierte un periodo como 'ene-25' a formato 'YYYY-MM'.
+
+    Se aceptan dos formatos de entrada: 'mmm-YY' (abreviatura de mes + año de
+    dos dígitos) y 'YYYY-MM' (ya normalizado, que se devuelve tal cual). El año
+    de dos dígitos se interpreta como 20YY.
 
     Retorna None si no puede parsear.
     """

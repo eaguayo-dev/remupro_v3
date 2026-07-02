@@ -3,6 +3,14 @@ Procesador de Lote Anual - Procesa 12 meses de SEP+PIE+BRP(+EIB) de golpe.
 
 Recibe ~48 archivos (4 por mes: web, sep, pie, eib opcional),
 los clasifica por mes y tipo, y genera un Excel consolidado anual.
+
+IMPORTANTE sobre el MES: los datos de horas NO traen el mes por dentro. El mes se
+determina en este orden de fuentes:
+  1. Del NOMBRE del archivo (via detect_month_from_filename).
+  2. De una columna 'Periodo' (cuando llega un archivo anual consolidado).
+  3. De una columna 'Mes' (cuando llega un archivo de horas reales).
+Por eso la clasificación por nombre es tan sensible: un archivo sin mes reconocible
+no se puede ubicar en el consolidado y se avisa al usuario (classification_warnings).
 """
 
 import logging
@@ -29,14 +37,22 @@ from processors.brp import BRPProcessor
 
 @dataclass
 class MonthlyFileSet:
-    """Conjunto de archivos para un mes."""
-    month: str  # '01'-'12'
+    """
+    Conjunto de archivos que corresponden a UN mes del lote anual.
+
+    Agrupa los 4 tipos posibles (sep, pie, eib, web) ya asociados a su mes. Cada
+    campo guarda la tupla (filename, path) o None si ese tipo no llegó para el mes.
+    """
+    month: str  # Número de mes en dos dígitos, '01'-'12'
     month_name: str
     sep: Optional[Tuple[str, Path]] = None   # (filename, path)
     pie: Optional[Tuple[str, Path]] = None
     eib: Optional[Tuple[str, Path]] = None
     web: Optional[Tuple[str, Path]] = None
-    pre_processed: bool = False  # True = sep/pie ya son archivos procesados sintéticos
+    # True cuando sep/pie NO son archivos brutos sino ya-procesados sintéticos,
+    # generados al partir un archivo anual consolidado (ver _split_anual_file).
+    # En process_all esto evita volver a correr SEPProcessor/PIEProcessor sobre ellos.
+    pre_processed: bool = False
 
 
 class AnualBatchProcessor:
@@ -68,25 +84,30 @@ class AnualBatchProcessor:
         """
         monthly: Dict[str, MonthlyFileSet] = {}
         shared_web: Optional[Tuple[str, Path]] = None
+        # Archivos cuyo tipo no se pudo deducir del nombre; se re-analizan por contenido.
         unclassified: List[Tuple[str, Path]] = []
         self._anual_file = None
         self._horas_file: Optional[Tuple[str, Path]] = None
+        # Reiniciar avisos: se recalculan en cada clasificación para mostrarlos en la UI.
         self.classification_warnings = []
 
+        # Primera pasada: clasificar por NOMBRE de archivo (mes + tipo).
         for filename, path in files:
             month = detect_month_from_filename(filename)
             ftype = detect_file_type(filename)
 
+            # Sin tipo reconocible por nombre: se deja para análisis por contenido.
             if not ftype:
                 unclassified.append((filename, path))
                 continue
 
-            # Web sin mes detectado → web compartido
+            # Web sin mes detectado → web compartido (se repartirá a los meses sin web).
             if ftype == 'web' and not month:
                 shared_web = (filename, path)
                 self.logger.info(f"Web compartido detectado: {filename}")
                 continue
 
+            # Tipo SEP/PIE/EIB conocido pero sin mes: no se puede ubicar → avisar y omitir.
             if not month:
                 msg = (
                     f"`{filename}` (tipo {ftype.upper()}) no tiene un mes reconocible "
@@ -97,12 +118,14 @@ class AnualBatchProcessor:
                 self.logger.warning(f"No se pudo clasificar mes: {filename} (tipo={ftype})")
                 continue
 
+            # Crear el set del mes la primera vez que aparece un archivo de ese mes.
             if month not in monthly:
                 month_name = MESES_NUM_TO_NAME.get(month, month)
                 monthly[month] = MonthlyFileSet(
                     month=month, month_name=month_name
                 )
 
+            # Asignar el archivo al campo correspondiente según su tipo.
             ms = monthly[month]
             entry = (filename, path)
             if ftype == 'sep':
@@ -114,12 +137,15 @@ class AnualBatchProcessor:
             elif ftype == 'web':
                 ms.web = entry
 
-        # Clasificar archivos no reconocidos: horas reales, anual consolidado
+        # Segunda pasada: los que no se reconocieron por nombre se analizan por CONTENIDO
+        # (leyendo sus columnas): archivo de horas reales o archivo anual consolidado.
         remaining_unclassified: List[Tuple[str, Path]] = []
         for filename, path in unclassified:
             if self._is_horas_file(path):
                 self.logger.info(f"Archivo de horas por subvención detectado: {filename}")
                 self._horas_file = (filename, path)
+            # Parece de horas pero le falta la columna 'Mes': no sirve para repartir por
+            # mes; se avisa al usuario (se caerá a horas estimadas por tipo de contrato).
             elif self._looks_like_horas_missing_mes(path):
                 msg = (
                     f"`{filename}` parece un archivo de horas (tiene RUT/SEP/PIE/SN) "
@@ -132,18 +158,21 @@ class AnualBatchProcessor:
             else:
                 remaining_unclassified.append((filename, path))
 
-        # Intentar detectar archivo anual consolidado
+        # Intentar detectar archivo anual consolidado entre los que aún no se clasificaron.
         for filename, path in remaining_unclassified:
             if self._is_anual_consolidado(path):
                 self.logger.info(f"Archivo anual consolidado detectado: {filename}")
                 self._anual_file = (filename, path)
+                # Si además llegó un archivo de horas reales, usarlo para repartir horas.
                 horas_path = self._horas_file[1] if self._horas_file else None
+                # Partir el anual en sets sintéticos por mes (uno por cada mes presente).
                 anual_months = self._split_anual_file(path, horas_path=horas_path)
                 for month_num, ms in anual_months.items():
                     if month_num not in monthly:
                         monthly[month_num] = ms
                     else:
-                        # No sobreescribir archivos SEP/PIE ya asignados por nombre
+                        # El mes ya existe (llegaron archivos por nombre): fusionar sin
+                        # pisar los SEP/PIE ya asignados por nombre (tienen prioridad).
                         existing = monthly[month_num]
                         if not existing.sep:
                             existing.sep = ms.sep
@@ -151,8 +180,9 @@ class AnualBatchProcessor:
                         if not existing.pie:
                             existing.pie = ms.pie
                             existing.pre_processed = ms.pre_processed
-                break  # Solo un archivo anual
+                break  # Solo se procesa un archivo anual (el primero encontrado).
             else:
+                # No es ni tipo por nombre, ni horas, ni anual consolidado: se ignora.
                 self.classification_warnings.append(
                     f"`{filename}` no se pudo clasificar (ni tipo SEP/PIE/EIB/WEB por "
                     f"nombre, ni archivo de horas, ni anual consolidado); se ignorará."
@@ -161,7 +191,7 @@ class AnualBatchProcessor:
                     f"No se pudo clasificar tipo: {filename}"
                 )
 
-        # Asignar web compartido a meses que no tengan web propio
+        # Repartir el web compartido: se asigna solo a los meses que no tienen web propio.
         if shared_web:
             for month_num, ms in monthly.items():
                 if not ms.web:
@@ -174,21 +204,30 @@ class AnualBatchProcessor:
         return monthly
 
     def _is_horas_file(self, path: Path) -> bool:
-        """Detecta si un archivo es de horas por subvención (Mes + Rut + SEP + PIE + SN)."""
+        """
+        Detecta si un archivo es de horas por subvención (Mes + Rut + SEP + PIE + SN).
+
+        Se decide por las COLUMNAS, no por el nombre. La columna 'Mes' es obligatoria
+        aquí: es la que permite asignar las horas reales a cada mes del consolidado.
+        """
         try:
+            # Solo se leen las primeras filas: basta con inspeccionar los encabezados.
             ext = path.suffix.lower()
             if ext == '.csv':
                 df = pd.read_csv(str(path), nrows=5, encoding='latin-1')
             else:
                 df = pd.read_excel(str(path), nrows=5, engine='openpyxl')
+            # Comparar en minúsculas y sin espacios para tolerar variaciones de formato.
             cols_lower = {str(c).lower().strip() for c in df.columns}
             has_mes = any('mes' == c for c in cols_lower)
             has_rut = any('rut' in c for c in cols_lower)
             has_sep = any(c == 'sep' for c in cols_lower)
             has_pie = any(c == 'pie' for c in cols_lower)
             has_sn = any(c == 'sn' for c in cols_lower)
+            # Es archivo de horas válido solo si están TODAS las columnas, incluida 'Mes'.
             return has_mes and has_rut and has_sep and has_pie and has_sn
         except Exception as e:
+            # Ante cualquier error de lectura se asume que no es archivo de horas.
             self.logger.debug(f"Error detectando archivo de horas: {e}")
             return False
 
@@ -197,7 +236,8 @@ class AnualBatchProcessor:
         Detecta un archivo que parece de horas (RUT + SEP + PIE + SN) pero SIN 'Mes'.
 
         Sirve para avisar al usuario: sin la columna Mes no se pueden asignar las
-        horas reales a cada mes y el sistema cae a horas estimadas.
+        horas reales a cada mes y el sistema cae a horas estimadas. Es la contraparte
+        de _is_horas_file: mismas columnas, pero exigiendo explícitamente que falte 'Mes'.
         """
         try:
             ext = path.suffix.lower()
@@ -211,13 +251,20 @@ class AnualBatchProcessor:
             has_sep = any(c == 'sep' for c in cols_lower)
             has_pie = any(c == 'pie' for c in cols_lower)
             has_sn = any(c == 'sn' for c in cols_lower)
+            # Coincide solo si tiene las columnas de horas pero le FALTA 'Mes'.
             return has_rut and has_sep and has_pie and has_sn and not has_mes
         except Exception as e:
             self.logger.debug(f"Error detectando archivo de horas sin Mes: {e}")
             return False
 
     def _is_anual_consolidado(self, path: Path) -> bool:
-        """Detecta si un archivo es un anual consolidado (Periodo + Tipo_de_Contrato)."""
+        """
+        Detecta si un archivo es un anual consolidado (Periodo + Tipo_de_Contrato).
+
+        Aquí el mes NO viene en el nombre ni en una columna 'Mes': viene dentro de la
+        columna 'Periodo' (una fila por docente/contrato/periodo). Ese archivo luego se
+        parte por mes en _split_anual_file.
+        """
         try:
             ext = path.suffix.lower()
             if ext == '.csv':
@@ -244,7 +291,8 @@ class AnualBatchProcessor:
         else:
             df_h = pd.read_excel(str(horas_path), engine='openpyxl')
 
-        # Mapear columnas case-insensitive
+        # Mapear los nombres reales de columnas a claves estándar (case-insensitive),
+        # porque los archivos llegan con encabezados en distinto formato/mayúsculas.
         h_col_map = {}
         for col in df_h.columns:
             cl = str(col).lower().strip()
@@ -261,17 +309,18 @@ class AnualBatchProcessor:
             if 'nombre' in cl and 'nombre' not in h_col_map:
                 h_col_map['nombre'] = col
 
+        # RUT normalizado: clave de cruce con el resto de los archivos.
         df_h['_rut_norm'] = df_h[h_col_map['rut']].apply(normalize_rut)
 
-        # Normalizar mes a número (1-12)
+        # Normalizar el mes a número 1-12 (acepta nombres, abreviaciones o números).
         mes_col = h_col_map['mes']
         df_h['_mes'] = self._normalize_mes_column(df_h[mes_col])
 
-        # Columnas de horas numéricas
+        # Convertir horas a numérico; los valores no válidos quedan en 0.
         for key in ['sep', 'pie', 'sn']:
             df_h[key.upper()] = pd.to_numeric(df_h[h_col_map[key]], errors='coerce').fillna(0)
 
-        # Nombre si existe
+        # El nombre es opcional; si no viene, se deja en blanco.
         if 'nombre' in h_col_map:
             df_h['_nombre'] = df_h[h_col_map['nombre']]
         else:
@@ -281,6 +330,7 @@ class AnualBatchProcessor:
 
     def _normalize_mes_column(self, series: pd.Series) -> pd.Series:
         """Normaliza columna Mes a número (1-12). Acepta nombres, abreviaciones, o números."""
+        # Tabla de equivalencias: nombre completo y abreviación → número de mes.
         meses_text = {
             'enero': 1, 'febrero': 2, 'marzo': 3, 'abril': 4,
             'mayo': 5, 'junio': 6, 'julio': 7, 'agosto': 8,
@@ -294,14 +344,17 @@ class AnualBatchProcessor:
             if pd.isna(val):
                 return None
             s = str(val).strip().lower()
+            # Primero probar como texto (enero, ene, ...).
             if s in meses_text:
                 return meses_text[s]
+            # Si no, probar como número dentro del rango válido de meses.
             try:
                 n = int(float(s))
                 if 1 <= n <= 12:
                     return n
             except (ValueError, TypeError):
                 pass
+            # No se pudo interpretar: se devuelve None (se descarta esa fila luego).
             return None
 
         return series.apply(parse_mes)
@@ -324,7 +377,7 @@ class AnualBatchProcessor:
         else:
             df = pd.read_excel(str(path), engine='openpyxl')
 
-        # Encontrar columnas clave (case-insensitive, str() por si hay int)
+        # Encontrar columnas clave (case-insensitive, str() por si el encabezado es int).
         col_map = {}
         for col in df.columns:
             cl = str(col).lower().strip()
@@ -347,14 +400,15 @@ class AnualBatchProcessor:
         rut_col = col_map['rut']
         nombre_col = col_map.get('nombre')
 
-        # Normalizar RUT
+        # Normalizar RUT (clave de agrupación por docente).
         df['_rut_norm'] = df[rut_col].apply(normalize_rut)
 
-        # Extraer mes del periodo
+        # Obtener el mes de cada fila desde la columna 'Periodo' (aquí vive el mes).
         periodo_col = col_map['periodo']
         df['_mes'] = self._extract_month_from_periodo(df[periodo_col])
 
-        # Cargar horas reales si están disponibles
+        # Si hay archivo de horas reales, cargarlo para repartir horas de forma exacta;
+        # si falla, se cae al fallback por Tipo_de_Contrato más abajo.
         horas_df = None
         if horas_path:
             try:
@@ -373,6 +427,7 @@ class AnualBatchProcessor:
         tmp_files_created: List[Path] = []
         all_horas_detail: List[pd.DataFrame] = []
 
+        # Un ciclo por cada mes efectivamente presente en el archivo anual.
         for mes_num in sorted(df['_mes'].dropna().unique()):
             mes_str = f"{int(mes_num):02d}"
             df_mes = df[df['_mes'] == mes_num].copy()
@@ -381,34 +436,35 @@ class AnualBatchProcessor:
                 continue
 
             if horas_df is not None:
-                # Usar horas reales: filtrar por mes y agrupar por RUT
+                # Camino preferido: usar horas reales de ese mes, agregadas por RUT.
                 horas_mes = horas_df[horas_df['_mes'] == mes_num].copy()
                 if not horas_mes.empty:
                     pivot_wide = horas_mes.groupby('_rut_norm').agg({
                         'SEP': 'sum', 'PIE': 'sum', 'SN': 'sum', '_nombre': 'first'
                     }).reset_index()
+                    # SN (subvención normal) equivale a NORMAL; EIB no viene en horas.
                     pivot_wide['NORMAL'] = pivot_wide['SN']
                     pivot_wide['EIB'] = 0
                     pivot_wide = pivot_wide.rename(columns={
                         '_rut_norm': 'Rut', '_nombre': 'Nombre'
                     })
                 else:
-                    # Sin datos de horas para este mes, fallback por contrato
+                    # Hay horas reales, pero no para este mes: fallback por contrato.
                     pivot_wide = self._pivot_by_contract(df_mes, col_map)
             else:
-                # Fallback: clasificación por Tipo_de_Contrato
+                # Sin archivo de horas: estimar distribución por Tipo_de_Contrato.
                 pivot_wide = self._pivot_by_contract(df_mes, col_map)
 
-            # Asegurar columnas mínimas
+            # Garantizar que existan todas las columnas de subvención (rellenar con 0).
             for col_name in ['SEP', 'PIE', 'NORMAL', 'SN', 'EIB']:
                 if col_name not in pivot_wide.columns:
                     pivot_wide[col_name] = 0
 
-            # Asegurar SN = NORMAL si falta
+            # Si SN quedó vacío pero hay NORMAL, copiarlo (SN y NORMAL son lo mismo).
             if pivot_wide['SN'].sum() == 0 and pivot_wide['NORMAL'].sum() > 0:
                 pivot_wide['SN'] = pivot_wide['NORMAL']
 
-            # Guardar detalle de horas para verificación
+            # Guardar el detalle de horas de este mes para las hojas de verificación.
             month_name = MESES_NUM_TO_NAME.get(mes_str, mes_str)
             has_nombre = 'Nombre' in pivot_wide.columns
             detail = pivot_wide[['Rut'] + (['Nombre'] if has_nombre else []) + ['SEP', 'PIE', 'NORMAL', 'EIB']].copy()
@@ -417,12 +473,13 @@ class AnualBatchProcessor:
             detail['MES_NUM'] = mes_str
             all_horas_detail.append(detail)
 
-            # Crear archivo SEP sintético: Rut, Nombre, SEP
+            # Reconstruir el formato de un archivo SEP procesado: Rut, Nombre, SEP.
             df_sep = pivot_wide[['Rut'] + (['Nombre'] if has_nombre else []) + ['SEP']].copy()
 
-            # Crear archivo PIE sintético: Rut, Nombre, PIE, SN
+            # Reconstruir el formato de un archivo PIE procesado: Rut, Nombre, PIE, SN.
             df_pie = pivot_wide[['Rut'] + (['Nombre'] if has_nombre else []) + ['PIE', 'SN']].copy()
 
+            # Escribir esos SEP/PIE sintéticos a temporales que consumirá el BRP luego.
             sep_path = self._make_temp()
             pie_path = self._make_temp()
             tmp_files_created.extend([sep_path, pie_path])
@@ -430,6 +487,7 @@ class AnualBatchProcessor:
             df_sep.to_excel(str(sep_path), index=False, engine='openpyxl')
             df_pie.to_excel(str(pie_path), index=False, engine='openpyxl')
 
+            # pre_processed=True: en process_all no se vuelven a procesar (ya lo están).
             result[mes_str] = MonthlyFileSet(
                 month=mes_str,
                 month_name=month_name,
@@ -438,7 +496,8 @@ class AnualBatchProcessor:
                 pre_processed=True,
             )
 
-        # Guardar referencia para limpieza y detalle de horas
+        # Guardar referencias para: limpiar los temporales al final y volcar el
+        # detalle de horas en las hojas de verificación del Excel de salida.
         self._anual_tmp_files = tmp_files_created
         self._anual_horas_detail = all_horas_detail
         return result
@@ -455,6 +514,7 @@ class AnualBatchProcessor:
         jornada_col = col_map.get('jornada')
         nombre_col = col_map.get('nombre')
 
+        # Horas de la fila: usar la jornada si existe; si no, contar 1 por fila.
         if jornada_col:
             df_mes['_jornada'] = pd.to_numeric(
                 df_mes[jornada_col], errors='coerce'
@@ -462,18 +522,21 @@ class AnualBatchProcessor:
         else:
             df_mes['_jornada'] = 1
 
+        # Clasificar el tipo de subvención (SEP/PIE/NORMAL/EIB) a partir del contrato.
         df_mes['_tipo'] = df_mes[col_map['tipo_contrato']].apply(classify_contract)
 
+        # Sumar jornada por RUT+tipo y luego pivotar a una columna por tipo de subvención.
         pivot = df_mes.groupby(['_rut_norm', '_tipo'])['_jornada'].sum().reset_index()
         pivot_wide = pivot.pivot_table(
             index='_rut_norm', columns='_tipo', values='_jornada', fill_value=0
         ).reset_index()
 
+        # Asegurar que estén todas las columnas de tipo aunque no aparezcan en los datos.
         for col_name in ['SEP', 'PIE', 'NORMAL', 'EIB']:
             if col_name not in pivot_wide.columns:
                 pivot_wide[col_name] = 0
 
-        # Obtener nombre
+        # Recuperar el nombre del docente (uno por RUT) para adjuntarlo al pivot.
         nombres = df_mes.groupby('_rut_norm').first().reset_index()
         nombre_series = nombres[['_rut_norm']]
         if nombre_col:
@@ -483,32 +546,37 @@ class AnualBatchProcessor:
 
         pivot_wide = pivot_wide.merge(nombre_series, on='_rut_norm', how='left')
         pivot_wide = pivot_wide.rename(columns={'_rut_norm': 'Rut'})
+        # SN (subvención normal) se deriva de NORMAL para mantener el formato esperado.
         pivot_wide['SN'] = pivot_wide['NORMAL']
 
         return pivot_wide
 
     def _extract_month_from_periodo(self, series: pd.Series) -> pd.Series:
-        """Extrae número de mes (1-12) de una columna Periodo."""
+        """
+        Extrae número de mes (1-12) de una columna Periodo.
+
+        El valor puede llegar como fecha, como string (fecha o número) o vacío; se
+        prueban esas formas en orden y lo no interpretable queda como None.
+        """
         result = pd.Series(index=series.index, dtype='float64')
 
         for idx, val in series.items():
             if pd.isna(val):
                 result.at[idx] = None
                 continue
-            # Si es datetime
+            # Caso 1: ya es un datetime → tomar su atributo .month directamente.
             if hasattr(val, 'month'):
                 result.at[idx] = val.month
                 continue
-            # Si es string, intentar parsear
+            # Caso 2: es texto; intentar interpretarlo como fecha (día primero, dd/mm).
             s = str(val).strip()
-            # Formato YYYY-MM-DD o similar
             try:
                 dt = pd.to_datetime(s, dayfirst=True)
                 result.at[idx] = dt.month
                 continue
             except (ValueError, TypeError):
                 pass
-            # Formato numérico (1-12)
+            # Caso 3: es un número de mes suelto (1-12).
             try:
                 n = int(float(s))
                 if 1 <= n <= 12:
@@ -560,6 +628,7 @@ class AnualBatchProcessor:
         if not monthly_sets:
             raise ValueError("No hay meses para procesar")
 
+        # Acumuladores: se concatenan al final en las distintas hojas del Excel anual.
         all_brp = []
         all_eib = []
         all_revisar = []
@@ -569,11 +638,14 @@ class AnualBatchProcessor:
         total_months = len(monthly_sets)
         processed = 0
 
+        # Progreso nulo: los sub-procesadores reportan aparte; aquí solo importa el mes.
         def noop_progress(val, msg):
             pass
 
+        # Procesar mes por mes en orden cronológico.
         for month_num in sorted(monthly_sets.keys()):
             ms = monthly_sets[month_num]
+            # El 90% de la barra se reparte entre los meses; el 10% final es el resumen.
             pct_base = int((processed / total_months) * 90)
             progress_callback(
                 pct_base, f"Procesando {ms.month_name}..."
@@ -582,23 +654,25 @@ class AnualBatchProcessor:
             tmp_files = []
             try:
                 if ms.pre_processed:
-                    # Archivos ya son procesados sintéticos (desde archivo anual)
+                    # Vienen de un anual consolidado: ya son SEP/PIE procesados sintéticos,
+                    # así que se usan tal cual sin volver a correr los procesadores.
                     sep_out = ms.sep[1]
                     pie_out = ms.pie[1]
                 else:
-                    # 1. Procesar SEP
+                    # 1. Procesar el SEP bruto de este mes a un archivo procesado temporal.
                     sep_out = self._make_temp()
                     tmp_files.append(sep_out)
                     sep_proc = SEPProcessor()
                     sep_proc.process_file(ms.sep[1], sep_out, noop_progress)
 
-                    # 2. Procesar PIE
+                    # 2. Procesar el PIE/Normal bruto de este mes.
                     pie_out = self._make_temp()
                     tmp_files.append(pie_out)
                     pie_proc = PIEProcessor()
                     pie_proc.process_file(ms.pie[1], pie_out, noop_progress)
 
-                    # Capturar sábanas SEP/PIE detalladas
+                    # Guardar las sábanas SEP/PIE detalladas (con etiqueta de mes) para
+                    # las hojas DETALLE_SEP/DETALLE_PIE del consolidado.
                     df_sep_detail = pd.read_excel(sep_out, engine='openpyxl')
                     df_sep_detail['MES'] = ms.month_name
                     df_sep_detail['MES_NUM'] = month_num
@@ -609,7 +683,7 @@ class AnualBatchProcessor:
                     df_pie_detail['MES_NUM'] = month_num
                     all_pie.append(df_pie_detail)
 
-                # 3. Procesar EIB (opcional)
+                # 3. Procesar EIB (opcional: solo si llegó archivo EIB para el mes).
                 eib_df = None
                 if ms.eib:
                     eib_out = self._make_temp()
@@ -621,7 +695,8 @@ class AnualBatchProcessor:
                     eib_df['MES_NUM'] = month_num
                     all_eib.append(eib_df)
 
-                # 4. Procesar BRP
+                # 4. Distribuir BRP cruzando web + SEP + PIE del mes. month_filter deja
+                #    que el BRP tome solo las filas del mes correcto del web sostenedor.
                 brp_out = self._make_temp()
                 tmp_files.append(brp_out)
                 brp_proc = BRPProcessor()
@@ -634,7 +709,7 @@ class AnualBatchProcessor:
                     month_filter=month_num,
                 )
 
-                # 5. Leer BRP_DISTRIBUIDO
+                # 5. Leer la hoja principal del resultado BRP y etiquetarla con el mes.
                 brp_df = pd.read_excel(
                     brp_out, sheet_name='BRP_DISTRIBUIDO', engine='openpyxl'
                 )
@@ -642,7 +717,7 @@ class AnualBatchProcessor:
                 brp_df['MES_NUM'] = month_num
                 all_brp.append(brp_df)
 
-                # 6. Leer REVISAR si existe
+                # 6. Leer la hoja REVISAR (docentes con problemas) si el BRP la generó.
                 try:
                     df_rev = pd.read_excel(
                         brp_out, sheet_name='REVISAR', engine='openpyxl'
@@ -654,10 +729,12 @@ class AnualBatchProcessor:
                 except Exception:
                     pass
 
-                # 7. Resumen del mes (con DAEM/CPEIP)
+                # 7. Armar el resumen numérico del mes (BRP + desglose DAEM/CPEIP).
+                # Helper defensivo: suma la columna si existe, si no devuelve 0.
                 def _col_sum(col):
                     return brp_df[col].sum() if col in brp_df.columns else 0
 
+                # Nombre de columna de RUT y de RBD pueden variar según el archivo.
                 rut_col_name = 'RUT (Docente)' if 'RUT (Docente)' in brp_df.columns else 'RUT_NORM'
                 rbd_col_name = next((c for c in brp_df.columns if 'rbd' in c.lower()), None)
 
@@ -689,11 +766,14 @@ class AnualBatchProcessor:
                     'DOCENTES_EIB': len(eib_df) if eib_df is not None else 0,
                     'CON_EIB': ms.eib is not None,
                 }
+                # Totales por fuente de financiamiento (suma de las tres subvenciones).
                 summary['DAEM_TOTAL'] = summary['DAEM_SEP'] + summary['DAEM_PIE'] + summary['DAEM_NORMAL']
                 summary['CPEIP_TOTAL'] = summary['CPEIP_SEP'] + summary['CPEIP_PIE'] + summary['CPEIP_NORMAL']
                 month_summaries.append(summary)
 
             except Exception as e:
+                # Si un mes falla, se registra el error pero se sigue con los demás:
+                # se agrega un resumen en ceros con la marca 'ERROR' para no cortar el lote.
                 self.logger.error(
                     f"Error procesando {ms.month_name}: {e}", exc_info=True
                 )
@@ -707,6 +787,8 @@ class AnualBatchProcessor:
                     'ERROR': str(e),
                 })
             finally:
+                # Borrar SIEMPRE los temporales del mes (contienen datos sensibles de
+                # remuneraciones), haya terminado bien o con error.
                 for tf in tmp_files:
                     self._cleanup(tf)
 
@@ -714,20 +796,20 @@ class AnualBatchProcessor:
 
         progress_callback(92, "Generando resumen anual...")
 
-        # Generar Excel consolidado
+        # Volcar todo lo acumulado al Excel consolidado multi-hoja.
         anual_horas = getattr(self, '_anual_horas_detail', [])
         self._write_output(
             output_path, all_brp, all_eib, month_summaries, anual_horas,
             all_revisar, all_sep, all_pie,
         )
 
-        # Limpiar archivos temporales del anual consolidado
+        # Limpiar los SEP/PIE sintéticos creados al partir el anual consolidado.
         for tf in getattr(self, '_anual_tmp_files', []):
             self._cleanup(tf)
 
         progress_callback(100, "Lote anual completado!")
 
-        # Estadísticas de retorno
+        # Estadísticas de retorno para la UI (meses OK/con error y totales anuales).
         df_summary = pd.DataFrame(month_summaries)
         return {
             'meses_procesados': len([s for s in month_summaries if 'ERROR' not in s]),
@@ -749,11 +831,17 @@ class AnualBatchProcessor:
         all_sep: Optional[List[pd.DataFrame]] = None,
         all_pie: Optional[List[pd.DataFrame]] = None,
     ) -> None:
-        """Escribe Excel multi-hoja con resultados anuales."""
+        """
+        Escribe el Excel multi-hoja con los resultados anuales.
+
+        Cada bloque genera una hoja distinta: RESUMEN_ANUAL (totales globales),
+        POR_MES, POR_RBD, DETALLE_BRP/EIB/SEP/PIE, REVISAR y las hojas HORAS_* de
+        verificación de la repartición de horas por subvención.
+        """
         df_summary = pd.DataFrame(month_summaries)
 
         with pd.ExcelWriter(str(output_path), engine='openpyxl') as writer:
-            # Hoja 1: RESUMEN_ANUAL
+            # Hoja 1: RESUMEN_ANUAL — cuadro de conceptos y montos totales del año.
             resumen_rows = []
             brp_sep = int(df_summary['BRP_SEP'].sum())
             brp_pie = int(df_summary['BRP_PIE'].sum())
@@ -787,7 +875,7 @@ class AnualBatchProcessor:
             ]
             cols_exist = [c for c in cols_mes if c in df_summary.columns]
             df_por_mes = df_summary[cols_exist].copy()
-            # Agregar fila de totales
+            # Añadir una fila 'TOTAL' al final sumando todas las columnas numéricas.
             totals = {c: df_por_mes[c].sum() for c in cols_exist if c != 'MES'}
             totals['MES'] = 'TOTAL'
             df_por_mes = pd.concat(
@@ -846,7 +934,9 @@ class AnualBatchProcessor:
                     writer, sheet_name='DETALLE_PIE', index=False
                 )
 
-            # Hojas de verificación: división de horas por subvención
+            # Hojas de verificación: permiten auditar cómo se repartieron las horas por
+            # subvención (una hoja por tipo con solo quienes tienen horas > 0, más una
+            # hoja HORAS_COMPLETO con todo). Solo aplica al flujo del anual consolidado.
             if anual_horas:
                 df_horas = pd.concat(anual_horas, ignore_index=True)
                 base_cols = ['MES', 'MES_NUM', 'Rut']
@@ -880,13 +970,13 @@ class AnualBatchProcessor:
                 )
 
     def _make_temp(self) -> Path:
-        """Crea un archivo temporal."""
+        """Crea un archivo temporal .xlsx (delete=False para poder reabrirlo luego)."""
         tmp = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
         tmp.close()
         return Path(tmp.name)
 
     def _cleanup(self, path: Path) -> None:
-        """Elimina archivo temporal."""
+        """Elimina un archivo temporal ignorando errores si ya no existe."""
         try:
             if path and path.exists():
                 os.unlink(path)

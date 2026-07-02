@@ -1,5 +1,13 @@
 """
 Generador de informes Word para procesamiento BRP.
+
+Construye un documento .docx (con python-docx) que resume un procesamiento
+mensual: portada, resumen ejecutivo, distribución del BRP por tipo de subvención,
+gráficos, docentes con BRP $0 (posibles EIB), advertencias/errores del log de
+auditoría, y opcionalmente una comparación con el mes anterior.
+
+El informe se devuelve como un BytesIO en memoria (no se escribe a disco aquí),
+para que la app pueda ofrecerlo como descarga directamente.
 """
 
 from io import BytesIO
@@ -8,6 +16,8 @@ from typing import Dict, Any, List, Optional
 
 import pandas as pd
 import matplotlib
+# 'Agg' es un backend sin interfaz gráfica: permite generar los gráficos en un
+# servidor/proceso sin pantalla. Debe fijarse ANTES de importar pyplot.
 matplotlib.use('Agg')  # Backend sin GUI
 import matplotlib.pyplot as plt
 from docx import Document
@@ -65,6 +75,8 @@ class InformeWord:
         Returns:
             Buffer con el documento Word
         """
+        # El informe se arma en secciones, en orden fijo. La comparación (8) solo
+        # se agrega si se recibió el dict 'comparacion'.
         # 1. Portada
         self._agregar_portada(mes)
 
@@ -135,13 +147,14 @@ class InformeWord:
         """Agrega resumen ejecutivo."""
         self.doc.add_heading("1. Resumen Ejecutivo", level=1)
 
-        # Calcular métricas
+        # Métricas del resumen. Igual que en el repositorio, cada acceso a columna
+        # se protege con 'if col in df.columns' para tolerar planillas incompletas.
         brp_sep = df['BRP_SEP'].sum() if 'BRP_SEP' in df.columns else 0
         brp_pie = df['BRP_PIE'].sum() if 'BRP_PIE' in df.columns else 0
         brp_normal = df['BRP_NORMAL'].sum() if 'BRP_NORMAL' in df.columns else 0
         brp_total = brp_sep + brp_pie + brp_normal
 
-        # Identificar columna RUT
+        # Preferir 'RUT_NORM'; si no está, buscar cualquier columna con 'rut'.
         rut_col = 'RUT_NORM' if 'RUT_NORM' in df.columns else None
         if not rut_col:
             for col in df.columns:
@@ -149,6 +162,7 @@ class InformeWord:
                     rut_col = col
                     break
 
+        # Docentes únicos por RUT (fallback: número de filas).
         total_docentes = df[rut_col].nunique() if rut_col else len(df)
 
         # Identificar columna RBD
@@ -159,10 +173,10 @@ class InformeWord:
                 break
         total_rbds = df[rbd_col].nunique() if rbd_col else 0
 
-        # Docentes con BRP = 0 (posibles EIB)
+        # BRP en $0 => posible docente EIB (ver nota en los modelos).
         docentes_eib = len(df[df['BRP_TOTAL'] == 0]) if 'BRP_TOTAL' in df.columns else 0
 
-        # Tabla de resumen
+        # Tabla de resumen (7 filas: encabezado + 6 métricas).
         table = self.doc.add_table(rows=7, cols=2)
         table.style = 'Table Grid'
 
@@ -181,7 +195,7 @@ class InformeWord:
             row.cells[0].text = concepto
             row.cells[1].text = str(valor)
 
-            # Encabezado en negrita
+            # La primera fila (i == 0) es el encabezado: se pone en negrita.
             if i == 0:
                 for cell in row.cells:
                     for paragraph in cell.paragraphs:
@@ -210,6 +224,8 @@ class InformeWord:
                 for run in paragraph.runs:
                     run.font.bold = True
 
+        # Monto y porcentaje sobre el total por cada tipo (guardas para no dividir
+        # por cero si el BRP total es 0).
         data = [
             ('SEP', brp_sep, brp_sep/brp_total*100 if brp_total > 0 else 0),
             ('PIE', brp_pie, brp_pie/brp_total*100 if brp_total > 0 else 0),
@@ -252,14 +268,16 @@ class InformeWord:
         brp_pie = df['BRP_PIE'].sum() if 'BRP_PIE' in df.columns else 0
         brp_normal = df['BRP_NORMAL'].sum() if 'BRP_NORMAL' in df.columns else 0
 
+        # Solo se dibuja el gráfico si hay algún BRP que mostrar.
         if brp_sep + brp_pie + brp_normal > 0:
-            # Gráfico de torta
+            # Gráfico de torta con la distribución del BRP por tipo de subvención.
             fig, ax = plt.subplots(figsize=(6, 4))
             valores = [brp_sep, brp_pie, brp_normal]
             etiquetas = ['SEP', 'PIE', 'NORMAL']
             colores = ['#3b82f6', '#10b981', '#f59e0b']
 
-            # Filtrar valores cero
+            # Excluir las porciones en cero para no ensuciar la torta (mantiene
+            # alineados valor/etiqueta/color al filtrar en paralelo con zip).
             datos = [(v, e, c) for v, e, c in zip(valores, etiquetas, colores) if v > 0]
             if datos:
                 valores_f, etiquetas_f, colores_f = zip(*datos)
@@ -267,11 +285,11 @@ class InformeWord:
                        colors=colores_f, startangle=90)
                 ax.set_title('Distribución por Tipo de Subvención')
 
-                # Guardar en buffer
+                # Renderizar el gráfico a PNG en memoria e insertarlo en el .docx.
                 buf = BytesIO()
                 plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
                 buf.seek(0)
-                plt.close()
+                plt.close()  # liberar la figura para no acumular memoria
 
                 self.doc.add_picture(buf, width=Inches(4.5))
                 self.doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -300,7 +318,7 @@ class InformeWord:
             # Mostrar primeros 20
             self.doc.add_paragraph()
 
-            # Identificar columnas
+            # Detectar columnas RUT/nombre/RBD por nombre (no son fijas).
             rut_col = 'RUT_NORM' if 'RUT_NORM' in df_eib.columns else None
             nombre_col = None
             rbd_col = None
@@ -313,6 +331,7 @@ class InformeWord:
                 if 'rbd' in col.lower():
                     rbd_col = col
 
+            # La tabla muestra a lo más 20 docentes (+1 fila de encabezado).
             if rut_col and len(df_eib) > 0:
                 table = self.doc.add_table(rows=min(len(df_eib), 20) + 1, cols=3)
                 table.style = 'Table Grid'
@@ -351,6 +370,8 @@ class InformeWord:
             self.doc.add_paragraph("No se detectaron valores inusuales ni advertencias.")
             return
 
+        # Errores en rojo (máx. 10) y advertencias en naranjo (máx. 20). Se
+        # truncan para no inflar el informe cuando hay muchos eventos.
         if errors:
             self.doc.add_heading("5.1 Errores", level=2)
             for entry in errors[:10]:
@@ -399,6 +420,8 @@ class InformeWord:
                     for run in paragraph.runs:
                         run.font.bold = True
 
+            # Se listan solo los primeros 15 eventos; el mensaje se recorta a 50
+            # caracteres (con '...') para que la columna no desborde la tabla.
             for i, entry in enumerate(audit_log.entries[:15], 1):
                 table.rows[i].cells[0].text = entry.timestamp.strftime('%H:%M:%S')
                 table.rows[i].cells[1].text = entry.nivel
@@ -506,7 +529,11 @@ class InformeWord:
         self.doc.add_paragraph()
 
     def _to_buffer(self) -> BytesIO:
-        """Convierte el documento a buffer."""
+        """Convierte el documento a buffer en memoria (listo para descargar).
+
+        Guarda el .docx en un BytesIO y hace seek(0) para dejar el cursor al
+        inicio, de modo que quien lo consuma pueda leerlo desde el principio.
+        """
         buffer = BytesIO()
         self.doc.save(buffer)
         buffer.seek(0)
