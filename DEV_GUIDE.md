@@ -148,11 +148,11 @@ Hay dos niveles, a propósito:
 
 - La versión y el historial de cambios viven en **`config/version.py`**
   (constante `APP_VERSION` + lista `UPDATES`).
-- `app.py → show_update_banner()` muestra un aviso con la última actualización.
-  El botón "Ya lo vi" guarda la versión vista en **localStorage** del navegador,
-  así no vuelve a molestar hasta la próxima actualización.
-- El localStorage es **solo un recordatorio visual**: no guarda datos ni afecta
-  cálculos. Borrarlo solo hace que el aviso reaparezca una vez.
+- `app.py → show_update_banner()` muestra un aviso nativo con la última
+  actualización. El botón "Ya lo vi" lo oculta durante la sesión (usa
+  `session_state`); si se refresca o reabre la página, reaparece. Es nativo (no
+  un componente HTML) para que al descartarlo no quede espacio en blanco.
+- El aviso es **solo un recordatorio visual**: no guarda datos ni afecta cálculos.
 
 **Para publicar una actualización:** sube `APP_VERSION`, agrega la entrada en
 `UPDATES` (config/version.py) y refleja lo mismo en `CHANGELOG.md`. Nada más.
