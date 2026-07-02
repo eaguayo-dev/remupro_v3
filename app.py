@@ -1463,6 +1463,84 @@ def show_update_banner():
                 st.rerun()
 
 
+def _inject_sticky_download_css():
+    """Inyecta (una sola vez por sesión) el CSS que deja fija la barra de descarga.
+
+    Apunta al contenedor con key 'rp_dlbar_*' (Streamlit le agrega la clase
+    'st-key-rp_dlbar_...') y le aplica position:sticky para que se quede pegada
+    arriba mientras se hace scroll del resultado.
+
+    Degradación elegante: si una versión de Streamlit no aplicara esa clase, la
+    barra igual aparece arriba del resultado (solo dejaría de quedar "pegada").
+    La descarga NUNCA se rompe: son botones nativos normales.
+
+    Nota: el offset 'top' puede necesitar ajuste fino según la altura del encabezado.
+    """
+    if st.session_state.get("_sticky_dl_css"):
+        return
+    st.session_state["_sticky_dl_css"] = True
+    st.markdown(
+        """
+        <style>
+        div[class*="st-key-rp_dlbar"] {
+            position: sticky;
+            top: 3.2rem;
+            z-index: 100;
+            background-color: var(--background-color, #ffffff);
+            border: 1px solid rgba(49, 51, 63, 0.15);
+            border-radius: 10px;
+            padding: 0.5rem 0.75rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def barra_descarga(excel_bytes, file_name, key, extras=None):
+    """Barra de descarga destacada y fija ("navbar" bajo las pestañas).
+
+    Se coloca ARRIBA del resultado (justo tras el mensaje de éxito) para que el
+    usuario no tenga que scrollear ni adivinar dónde bajar el archivo.
+
+    Args:
+        excel_bytes: contenido del Excel principal (bytes o BytesIO).
+        file_name:   nombre sugerido para la descarga.
+        key:         clave única por pestaña (evita choques de widgets de Streamlit).
+        extras:      lista opcional de dicts con formatos secundarios (PDF/CSV):
+                     {'label', 'data', 'file_name', 'mime', 'help'}.
+
+    Ver _inject_sticky_download_css para el comportamiento "pegado".
+    """
+    _inject_sticky_download_css()
+    with st.container(key=f"rp_dlbar_{key}"):
+        st.caption("Descarga tu resultado:")
+        st.download_button(
+            "⬇️  Descargar Excel del resultado",
+            data=excel_bytes,
+            file_name=file_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+            width='stretch',
+            key=f"{key}_dl_main",
+            help="El archivo principal para trabajar (.xlsx)",
+        )
+        if extras:
+            cols = st.columns(len(extras))
+            for col, ex in zip(cols, extras):
+                with col:
+                    st.download_button(
+                        ex["label"],
+                        data=ex["data"],
+                        file_name=ex["file_name"],
+                        mime=ex.get("mime", "application/octet-stream"),
+                        width='stretch',
+                        key=f"{key}_{ex['file_name']}",
+                        help=ex.get("help"),
+                    )
+
+
 def show_column_alerts(column_alerts):
     """Muestra las alertas de columnas que reporta un procesador.
 
@@ -2521,6 +2599,13 @@ def tab_sep_pie():
             else:
                 success_box(f"Se procesaron **{len(df)}** registros correctamente")
                 st.toast(f"{modo} procesado: {len(df)} registros", icon="✅")
+
+                # Barra de descarga fija, ARRIBA del resultado (piloto UI/UX).
+                barra_descarga(
+                    to_excel_buffer(df),
+                    f"{Path(archivo.name).stem}_procesado.xlsx",
+                    key="seppie",
+                )
 
                 show_column_alerts(processor.get_column_alerts())
 
