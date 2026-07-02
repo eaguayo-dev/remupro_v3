@@ -4869,11 +4869,12 @@ def _tab_lote_anual_single(file_tuples, tmp_paths, anio):
             f"se dividió automáticamente en archivos SEP/PIE sintéticos por mes."
         )
 
-    # En el caso ESTÁNDAR (sin anual consolidado ni archivo de horas) mostramos
-    # la grilla EDITABLE de confirmación y reconstruimos `monthly` desde lo que
-    # el usuario confirma. En el modo avanzado se conserva la grilla de solo
-    # lectura de siempre (el anual/horas ya arman los meses automáticamente).
-    usar_grilla_editable = (anual_file is None and horas_file is None)
+    # Grilla EDITABLE de confirmación en el caso ESTÁNDAR (SEP/PIE/WEB por mes).
+    # Solo se desactiva con un ANUAL CONSOLIDADO (ese arma los meses solo). Un
+    # archivo de horas por subvención NO desactiva la grilla: en el flujo por-mes
+    # no se usa (queda como fila '(ignorar)') y los SEP/PIE igual necesitan
+    # confirmarse. En modo avanzado (anual) se conserva la grilla de solo lectura.
+    usar_grilla_editable = (anual_file is None)
 
     if usar_grilla_editable:
         monthly = _grilla_confirmacion_lote_anual(file_tuples, shared_web)
