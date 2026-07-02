@@ -31,22 +31,31 @@ class EIBProcessor(BaseProcessor):
         output_path: Path,
         progress_callback: ProgressCallback,
     ) -> None:
-        """Procesa archivo de remuneraciones EIB."""
+        """
+        Procesa archivo de remuneraciones EIB.
+
+        Flujo (más simple que SEP porque no hay merge de hojas): cargar la única
+        hoja -> normalizar -> prorratear -> validar -> guardar, reportando avance
+        por progress_callback. Las excepciones se loguean y se re-lanzan.
+        """
         try:
             progress_callback(0, "Iniciando proceso EIB...")
 
-            # Cargar datos
+            # Cargar datos: EIB usa una sola hoja (no HORAS+TOTAL como SEP/PIE).
             progress_callback(5, "Cargando datos...")
             self.validate_file(input_path)
             df = self._load_eib_sheet(input_path)
 
             progress_callback(20, "Normalizando datos...")
 
-            # Normalizar columna Rut (EIB puede usar 'rut' minúscula)
+            # Normalizar columna Rut (EIB puede usar 'rut' minúscula) para que
+            # el ordenamiento y demás lógica encuentren siempre 'Rut'.
             if 'rut' in df.columns and 'Rut' not in df.columns:
                 df = df.rename(columns={'rut': 'Rut'})
 
-            # Validar columna de horas
+            # Validar columna de horas: sin la jornada no hay prorrateo posible,
+            # por eso su ausencia es un error fatal (se listan las columnas
+            # disponibles para ayudar a diagnosticar el archivo).
             hours_col = self.config.EIB_HOURS_COL
             if hours_col not in df.columns:
                 raise ValueError(
@@ -54,15 +63,20 @@ class EIBProcessor(BaseProcessor):
                     f"Columnas disponibles: {list(df.columns)}"
                 )
 
-            # Asegurar valores numéricos en columna de horas
+            # Asegurar valores numéricos en la columna de horas: texto o vacíos
+            # se convierten a 0 (coerce -> NaN -> 0) para evitar errores de tipo.
             df[hours_col] = pd.to_numeric(df[hours_col], errors='coerce').fillna(0)
 
-            # 100% EIB: total horas = jornada (ratio=1.0)
+            # Clave de EIB: es 100% EIB, así que el total de horas del docente es
+            # su propia jornada. El ratio del prorrateo es 1.0 (jornada/jornada),
+            # de modo que cada monto '_EIB' termina siendo el monto completo.
             df['TOTAL HORAS POR DOCENTE'] = df[hours_col]
 
             progress_callback(40, "Calculando salarios proporcionales...")
 
-            # Prorratear columnas con sufijo _EIB
+            # Prorratear (aquí, con ratio 1.0, equivale a copiar el monto) tanto
+            # las columnas especiales como los beneficios opcionales; genera las
+            # columnas '<col>_EIB' y alerta por especiales faltantes.
             all_salary_columns = SPECIAL_SALARY_COLUMNS + SALARY_BENEFIT_COLUMNS
             df = self.prorate_columns(
                 df,
@@ -75,7 +89,7 @@ class EIBProcessor(BaseProcessor):
             progress_callback(70, "Validando horas...")
             df = self.validate_hours(df)
 
-            # Ordenar
+            # Ordenar el resultado para revisión (por Rut y Nombre si existen).
             if 'Rut' in df.columns and 'Nombre' in df.columns:
                 df = df.sort_values(['Rut', 'Nombre'])
             elif 'Rut' in df.columns:
@@ -91,12 +105,20 @@ class EIBProcessor(BaseProcessor):
             raise
 
     def _load_eib_sheet(self, file_path: Path) -> pd.DataFrame:
-        """Carga la hoja del archivo EIB (CSV o Excel)."""
+        """
+        Carga la hoja del archivo EIB (CSV o Excel).
+
+        Para Excel se intenta primero la hoja convencional 'Hoja1'; si no existe,
+        se cae de forma tolerante a la primera hoja del libro, sea cual sea su
+        nombre (los archivos EIB no siempre respetan la convención).
+        """
+        # Los archivos CSV tienen una sola tabla: se cargan directamente.
         if self.is_csv(file_path):
             return self.load_datafile(file_path)
         try:
             return self.load_excel_with_retry(file_path, 'Hoja1')
         except (ValueError, KeyError):
+            # 'Hoja1' no existe: usar la primera hoja disponible como respaldo.
             self.logger.info("Hoja 'Hoja1' no encontrada, usando primera hoja")
             with pd.ExcelFile(str(file_path), engine='openpyxl') as xlsx:
                 if not xlsx.sheet_names:

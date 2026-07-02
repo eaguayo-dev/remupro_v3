@@ -3,9 +3,23 @@ Procesador BRP (Bonificación de Reconocimiento Profesional).
 
 Distribuye el BRP según las horas en cada tipo de subvención (SEP, PIE, GENERAL).
 
+Fuente de datos: archivo MINEDUC "web sostenedor". Sus columnas se mapean de
+forma flexible (sin distinguir mayúsculas/minúsculas ni coincidencia exacta),
+porque el formato del archivo varía entre descargas. Cuando faltan columnas se
+generan alertas: WEB_CRITICAL_COLUMNS ausentes => esos montos quedan en $0;
+WEB_INFO_COLUMNS ausentes => solo aviso informativo.
+
+Terminología de pagadores (importante para entender el desglose):
+- DAEM  = municipio    -> parte de "subvención".
+- CPEIP = ministerio   -> parte de "transferencia directa".
+
 Columnas que se dividen:
 - Total reconocimiento profesional = Subvención reconocimiento + Transferencia reconocimiento
 - Total tramo = Subvención tramo + Transferencia tramo
+
+Criterio de distribución por subvención:
+- La parte de SUBVENCIÓN (DAEM) se reparte por proporción de horas SEP/PIE/NORMAL.
+- La parte de TRANSFERENCIA (CPEIP) y los alumnos prioritarios van 100% a NORMAL.
 """
 
 import logging
@@ -24,14 +38,20 @@ from config.escuelas import get_rbd_map, parse_school_name
 
 class BRPProcessor(BaseProcessor):
     """Procesador para distribuir BRP entre tipos de subvención."""
-    
+
+    # Tope legal de horas de contrato de un docente. Si la suma de horas
+    # (SEP+PIE+SN) lo supera, el caso se marca para revisión manual.
     MAX_HORAS = 44
-    
+
     def __init__(self):
         super().__init__()
+        # Nombres canónicos de columnas esperadas (definición estática).
         self.cols = WEB_SOSTENEDOR_COLUMNS
+        # Mapa clave_lógica -> nombre real hallado en el archivo cargado.
         self.cols_actual = {}
+        # Docentes que requieren revisión manual (exceso de horas / sin liquidación).
         self.docentes_revisar = []
+        # Alertas sobre columnas faltantes o nuevas, para mostrar al usuario.
         self.column_alerts = []
     
     def process_file(
@@ -45,6 +65,11 @@ class BRPProcessor(BaseProcessor):
         tipo_pago_filter: Optional[List[str]] = None,
     ) -> None:
         """Procesa y distribuye BRP.
+
+        Orquesta todo el flujo: carga el archivo MINEDUC y los archivos ya
+        procesados de SEP y PIE, construye el mapa de horas por docente,
+        distribuye los montos BRP por establecimiento y tipo de subvención, y
+        guarda un único Excel con varias hojas (resumen, revisión, etc.).
 
         Args:
             month_filter: Mes a filtrar en web sostenedor ('01'-'12'). None = sin filtro.
@@ -66,12 +91,15 @@ class BRPProcessor(BaseProcessor):
             progress_callback(25, "Cargando archivo PIE procesado...")
             df_pie = self._load_processed_file(pie_procesado_path, 'PIE')
             
-            # 2. Construir mapa de horas
+            # 2. Construir mapa de horas por docente (SEP / PIE / SN / TOTAL).
+            #    Es el denominador y las proporciones para repartir los montos.
             progress_callback(35, "Analizando horas por tipo de subvención...")
             horas_por_docente = self._build_hours_map(df_sep, df_pie)
             self._horas_map = horas_por_docente  # Guardar para acceso posterior
-            
-            # 3. Identificar casos para revisión
+
+            # 3. Identificar casos para revisión manual.
+            #    ruts_web: docentes presentes en el archivo MINEDUC.
+            #    ruts_procesados: docentes con horas en SEP/PIE.
             progress_callback(40, "Identificando casos para revisión...")
             ruts_web = set(df_web['RUT_NORM'].unique())
             ruts_procesados = set(horas_por_docente.keys())
@@ -106,9 +134,14 @@ class BRPProcessor(BaseProcessor):
             raise
     
     def _save_combined_file(self, df_result: pd.DataFrame, output_path: Path) -> None:
-        """Guarda resultado y revisión en UN solo archivo con múltiples hojas."""
+        """Guarda resultado y revisión en UN solo archivo con múltiples hojas.
+
+        Hojas generadas: BRP_DISTRIBUIDO (detalle por docente), RESUMEN_POR_RBD,
+        REVISAR (solo si hay casos), RESUMEN_GENERAL, MULTI_ESTABLECIMIENTO
+        (solo si aplica) y una hoja por cada establecimiento.
+        """
         with pd.ExcelWriter(str(output_path), engine='openpyxl') as writer:
-            
+
             # Hoja 1: BRP Distribuido (con nombres)
             df_export = self._prepare_export_dataframe(df_result)
             df_export.to_excel(writer, sheet_name='BRP_DISTRIBUIDO', index=False)
@@ -120,16 +153,17 @@ class BRPProcessor(BaseProcessor):
             # Hoja 3: Casos a revisar (si hay)
             if self.docentes_revisar:
                 df_revision = pd.DataFrame(self.docentes_revisar)
-                
-                # Ordenar
+
+                # Ordenar: primero los que exceden horas, luego sin liquidación;
+                # dentro de cada grupo, mayor total de horas primero.
                 df_revision['_orden'] = df_revision['MOTIVO'].map({
-                    'EXCEDE 44 HORAS': 0, 
+                    'EXCEDE 44 HORAS': 0,
                     'SIN LIQUIDACIÓN': 1
                 })
                 df_revision = df_revision.sort_values(['_orden', 'HORAS_TOTAL'], ascending=[True, False])
                 df_revision = df_revision.drop('_orden', axis=1)
-                
-                # Reordenar columnas
+
+                # Reordenar columnas: primero las prioritarias, luego el resto.
                 cols_order = ['RUT', 'NOMBRE', 'APELLIDOS', 'TIPO_PAGO', 'MOTIVO', 
                               'HORAS_SEP', 'HORAS_PIE', 'HORAS_SN', 'HORAS_TOTAL', 
                               'EXCESO', 'DETALLE', 'ACCION']
@@ -156,19 +190,24 @@ class BRPProcessor(BaseProcessor):
 
     def _add_per_school_sheets(self, df_export: pd.DataFrame, writer) -> None:
         """Agrega una hoja por cada establecimiento con nombre parseado."""
+        # Sin columna RBD no se pueden separar establecimientos.
         col_rbd = self.cols_actual.get('rbd')
         if not col_rbd or col_rbd not in df_export.columns:
             return
 
+        # Mapa RBD -> nombre oficial del establecimiento.
         rbd_map = get_rbd_map()
         used_names = set()
 
         for rbd_val, df_school in df_export.groupby(col_rbd):
+            # El RBD puede venir como float (ej. 1234.0); normalizar a texto entero.
             rbd_str = str(int(rbd_val)) if isinstance(rbd_val, float) else str(rbd_val)
             full_name = rbd_map.get(rbd_str, f'RBD_{rbd_str}')
+            # Acortar el nombre para la pestaña solo si se conoce el nombre real.
             short_name = parse_school_name(full_name) if full_name != f'RBD_{rbd_str}' else full_name
 
-            # Excel sheet names: max 31 chars, unique
+            # Excel limita los nombres de hoja a 31 caracteres y deben ser únicos.
+            # Si ya se usó el nombre, se le agrega el RBD como sufijo diferenciador.
             sheet_name = short_name[:31]
             if sheet_name in used_names:
                 sheet_name = f"{short_name[:27]}_{rbd_str}"[:31]
@@ -177,11 +216,18 @@ class BRPProcessor(BaseProcessor):
             try:
                 df_school.to_excel(writer, sheet_name=sheet_name, index=False)
             except Exception as e:
+                # Un nombre problemático no debe abortar el guardado completo.
                 self.logger.warning(f"No se pudo crear hoja '{sheet_name}': {e}")
     
     def _prepare_export_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Prepara DataFrame para exportar con nombres y columnas ordenadas."""
-        # Columnas a incluir en orden
+        """Prepara DataFrame para exportar con nombres y columnas ordenadas.
+
+        Arma el orden final de columnas: identificación (RBD, RUT, nombre, etc.)
+        + montos MINEDUC originales (renombrados con prefijo MINEDUC_) + marca
+        multi-establecimiento + montos BRP distribuidos + resto de columnas.
+        Excluye columnas internas de trabajo (RUT_NORM, ES_MULTI, *_DIST, etc.).
+        """
+        # Resolver nombres reales de columnas clave (pueden no existir).
         col_rbd = self.cols_actual.get('rbd')
         col_rut = self.cols_actual.get('rut')
         col_nombres = self.cols_actual.get('nombres')
@@ -191,14 +237,14 @@ class BRPProcessor(BaseProcessor):
         col_tipo_pago = self.cols_actual.get('tipo_pago')
         col_tramo = self.cols_actual.get('tramo')
         
-        # Crear columna NOMBRE_COMPLETO
+        # Construir NOMBRE_COMPLETO como "Apellido1 Apellido2 Nombres".
         if col_nombres and col_ap1:
             df['NOMBRE_COMPLETO'] = df.apply(
-                lambda r: f"{r.get(col_ap1, '')} {r.get(col_ap2, '')} {r.get(col_nombres, '')}".strip(), 
+                lambda r: f"{r.get(col_ap1, '')} {r.get(col_ap2, '')} {r.get(col_nombres, '')}".strip(),
                 axis=1
             )
-        
-        # Columnas prioritarias al inicio
+
+        # Columnas prioritarias al inicio (solo las que existan en el df)
         cols_inicio = []
         if col_rbd and col_rbd in df.columns:
             cols_inicio.append(col_rbd)
@@ -226,7 +272,9 @@ class BRPProcessor(BaseProcessor):
         ]
         cols_mineduc = [c for c in cols_mineduc if c in df.columns]
 
-        # Renombrar columnas MINEDUC para claridad en el export
+        # Renombrar columnas MINEDUC para claridad en el export.
+        # Se COPIAN a nombres con prefijo MINEDUC_ (no se eliminan las originales;
+        # se excluirán del orden final más abajo).
         rename_map = {
             'RECONOCIMIENTO_DIST': 'MINEDUC_RECONOCIMIENTO',
             'TRAMO_DIST': 'MINEDUC_TRAMO',
@@ -242,7 +290,7 @@ class BRPProcessor(BaseProcessor):
                 df[new_name] = df[old_name]
         cols_mineduc_renamed = [rename_map.get(c, c) for c in cols_mineduc]
 
-        # Columnas multi-establecimiento
+        # Columnas multi-establecimiento: convertir booleano a "SI"/"NO" legible.
         cols_multi = []
         if 'ES_MULTI' in df.columns:
             df['MULTI_ESTABLECIMIENTO'] = df['ES_MULTI'].map({True: 'SI', False: 'NO'})
@@ -264,7 +312,8 @@ class BRPProcessor(BaseProcessor):
         ]
         cols_brp = [c for c in cols_brp if c in df.columns]
 
-        # Columnas finales (excluyendo las ya agregadas y las internas)
+        # Conjunto de columnas que NO deben repetirse en "resto": las ya
+        # ubicadas explícitamente y las auxiliares internas del cálculo.
         cols_excluir = set(cols_inicio + cols_mineduc_renamed + cols_multi + cols_brp + [
             'RUT_NORM', 'ES_MULTI', 'TOTAL_HORAS_MINEDUC',
             'HORAS_SEP', 'HORAS_PIE', 'HORAS_SN',
@@ -286,10 +335,11 @@ class BRPProcessor(BaseProcessor):
         """Crea resumen de BRP por establecimiento con desglose DAEM/CPEIP."""
         col_rbd = self.cols_actual.get('rbd')
 
+        # Sin columna RBD no hay agrupación posible; devolver mensaje.
         if not col_rbd or col_rbd not in df.columns:
             return pd.DataFrame({'Mensaje': ['No se encontró columna RBD']})
 
-        # Agrupar por RBD
+        # Agregar por RBD: nº de docentes únicos y sumas de montos por tipo.
         agg_cols = {
             'RUT_NORM': 'nunique',
             'BRP_SEP': 'sum', 'BRP_PIE': 'sum', 'BRP_NORMAL': 'sum', 'BRP_TOTAL': 'sum',
@@ -303,12 +353,12 @@ class BRPProcessor(BaseProcessor):
                            'DAEM_SEP', 'DAEM_PIE', 'DAEM_NORMAL',
                            'CPEIP_SEP', 'CPEIP_PIE', 'CPEIP_NORMAL']
 
-        # Agregar fila de totales
+        # Fila final "TOTAL" con la suma de todas las columnas numéricas.
         totales = {col: resumen[col].sum() for col in resumen.columns if col != 'RBD'}
         totales['RBD'] = 'TOTAL'
         resumen = pd.concat([resumen, pd.DataFrame([totales])], ignore_index=True)
 
-        # Calcular porcentajes
+        # Porcentaje de cada tipo respecto del BRP total (tomado de la fila TOTAL).
         total_brp = resumen.loc[resumen['RBD'] == 'TOTAL', 'BRP_TOTAL'].values[0]
         if total_brp > 0:
             resumen['%_SEP'] = (resumen['BRP_SEP'] / total_brp * 100).round(1)
@@ -318,7 +368,12 @@ class BRPProcessor(BaseProcessor):
         return resumen
     
     def _create_general_summary(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Crea resumen general para dashboard con desglose DAEM/CPEIP."""
+        """Crea resumen general para dashboard con desglose DAEM/CPEIP.
+
+        Devuelve una tabla vertical CONCEPTO/VALOR (formato de dashboard) con
+        totales globales: docentes, montos BRP por tipo, porcentajes, desglose
+        DAEM vs CPEIP, y detalle de reconocimiento/tramo/prioritarios.
+        """
         total_docentes = df['RUT_NORM'].nunique()
         col_rbd = self.cols_actual.get('rbd')
         total_rbds = df[col_rbd].nunique() if col_rbd and col_rbd in df.columns else 0
@@ -407,6 +462,15 @@ class BRPProcessor(BaseProcessor):
     ) -> pd.DataFrame:
         """Carga y valida el archivo web_sostenedor (CSV o Excel).
 
+        Robustez del formato MINEDUC:
+          - CSV: intenta UTF-8 y cae a latin-1 (acentos) si falla.
+          - Detección de encabezado: si la 1ª columna no parece "RBD", reintenta
+            leyendo con header en la fila 1 (algunos archivos traen una fila de
+            título antes de los encabezados reales).
+          - Excel: si openpyxl falla por estilos corruptos, usa el motor calamine.
+        Tras cargar aplica filtros opcionales (mes, tipo de pago), mapea columnas
+        de forma flexible, genera alertas de columnas y normaliza el RUT.
+
         Args:
             month_filter: Mes a filtrar ('01'-'12'). None = sin filtro.
             tipo_pago_filter: Lista de tipos de pago a incluir. None = todos.
@@ -414,11 +478,13 @@ class BRPProcessor(BaseProcessor):
         self.validate_file(path)
 
         if self.is_csv(path):
+            # UTF-8 primero; latin-1 como respaldo para acentos/ñ.
             try:
                 df = pd.read_csv(str(path), encoding='utf-8')
             except UnicodeDecodeError:
                 df = pd.read_csv(str(path), encoding='latin-1')
-            # Si la primera columna no parece ser RBD, probar con header=1
+            # Si la primera columna no parece ser RBD, el encabezado real está
+            # en la fila 1 (hay una fila de título arriba): releer con header=1.
             if 'Rbd' not in str(df.columns[0]) and 'RBD' not in str(df.columns[0]).upper():
                 try:
                     df = pd.read_csv(str(path), encoding='utf-8', header=1)
@@ -430,6 +496,7 @@ class BRPProcessor(BaseProcessor):
             except TypeError:
                 # openpyxl puede fallar con estilos corruptos; usar calamine
                 xlsx = pd.ExcelFile(str(path), engine='calamine')
+            # Se procesa siempre la primera hoja del libro.
             sheet_name = xlsx.sheet_names[0]
 
             # Intentar leer con header en fila 0, si falla probar fila 1
@@ -439,15 +506,17 @@ class BRPProcessor(BaseProcessor):
             if 'Rbd' not in str(df.columns[0]) and 'RBD' not in str(df.columns[0]).upper():
                 df = pd.read_excel(xlsx, sheet_name=sheet_name, header=1)
 
+        # Quitar espacios sobrantes en los nombres de columna (frecuentes en MINEDUC).
         df.columns = df.columns.str.strip()
 
-        # Filtrar por mes si se especifica
+        # Filtrar por mes si se especifica (el archivo puede traer varios meses).
         if month_filter:
             mes_col = next((c for c in df.columns if c.strip().lower() == 'mes'), None)
             if mes_col:
                 from config.columns import MESES_NUM_TO_NAME, normalize_month_value
                 month_name = MESES_NUM_TO_NAME.get(month_filter, '')
-                # Normalizar cada valor de la columna Mes a número y comparar
+                # La columna Mes puede venir como nombre o número; se normaliza
+                # cada valor a '01'-'12' y se compara con el mes pedido.
                 mask = df[mes_col].apply(
                     lambda v: normalize_month_value(v) == month_filter
                 )
@@ -462,8 +531,9 @@ class BRPProcessor(BaseProcessor):
                     f"{month_name or month_filter}"
                 )
 
-        # Filtrar por tipo de pago si se especifica
+        # Filtrar por tipo de pago si se especifica (ej. excluir reemplazos).
         if tipo_pago_filter is not None:
+            # Buscar la columna de tipo de pago aceptando variantes de nombre.
             tp_col = next(
                 (c for c in df.columns if 'tipo de pago' in c.lower() or 'tipo_pago' in c.lower()),
                 None,
@@ -479,7 +549,9 @@ class BRPProcessor(BaseProcessor):
                         f"{len(df)} filas restantes"
                     )
 
-        # Buscar columnas de forma flexible
+        # Buscar columnas de forma flexible (case-insensitive).
+        # Prioriza coincidencia exacta; si no, acepta coincidencia parcial
+        # (target contenido en el nombre de la columna).
         def find_col(target):
             target_lower = target.lower().strip()
             for col in df.columns:
@@ -488,8 +560,9 @@ class BRPProcessor(BaseProcessor):
                 if target_lower in col.lower():
                     return col
             return None
-        
-        # Mapear columnas
+
+        # Mapear cada clave lógica al nombre real de columna. El patrón
+        # "A or B" usa un nombre alternativo cuando el primario no aparece.
         self.cols_actual = {
             'rbd': find_col('rbd') or find_col('establecimiento'),
             'rut': find_col('rut (docente)') or find_col('rut'),
@@ -508,16 +581,16 @@ class BRPProcessor(BaseProcessor):
             'asig_prioritarios': find_col('asignación directa alumnos prioritarios') or find_col('alumnos prioritarios'),
         }
         
-        # Verificar mínimas requeridas
+        # Columnas imprescindibles: sin ellas no se puede procesar => error duro.
         required = ['rbd', 'rut', 'horas_contrato']
         missing = [r for r in required if not self.cols_actual.get(r)]
         if missing:
             raise ProcessorError(f"No se encontraron columnas: {missing}")
 
-        # Generar alertas de columnas
+        # Reiniciar y reconstruir alertas de columnas para esta carga.
         self.column_alerts = []
 
-        # Columnas críticas faltantes (afectan cálculo)
+        # Columnas críticas faltantes: no abortan, pero su monto quedará en $0.
         for key in WEB_CRITICAL_COLUMNS:
             if not self.cols_actual.get(key):
                 nombre_amigable = WEB_FRIENDLY_NAMES.get(key, key)
@@ -530,7 +603,7 @@ class BRPProcessor(BaseProcessor):
                 })
                 self.logger.warning(f"Columna crítica no encontrada: {nombre_amigable}")
 
-        # Columnas informativas faltantes
+        # Columnas informativas faltantes: solo aviso, no afectan el cálculo.
         for key in WEB_INFO_COLUMNS:
             if not self.cols_actual.get(key):
                 nombre_amigable = WEB_FRIENDLY_NAMES.get(key, key)
@@ -542,7 +615,9 @@ class BRPProcessor(BaseProcessor):
                     'mensaje': f"No se encontró '{nombre_amigable}' (informativa, no afecta cálculo)."
                 })
 
-        # Columnas nuevas no reconocidas
+        # Columnas nuevas no reconocidas: detectar columnas del archivo que no
+        # están ni en la definición estática ni en el mapeo actual, para avisar
+        # al usuario (posibles cambios de formato de MINEDUC).
         columnas_conocidas = set()
         for v in WEB_SOSTENEDOR_COLUMNS.values():
             columnas_conocidas.add(v.lower().strip())
@@ -551,6 +626,7 @@ class BRPProcessor(BaseProcessor):
                 columnas_conocidas.add(v.lower().strip())
 
         columnas_archivo = {col.lower().strip() for col in df.columns}
+        # Restar 'rut_norm' porque es una columna que agregamos nosotros más abajo.
         desconocidas = columnas_archivo - columnas_conocidas - {'rut_norm'}
 
         if desconocidas:
@@ -564,7 +640,8 @@ class BRPProcessor(BaseProcessor):
                 'mensaje': f"Se encontraron {len(nombres_originales)} columnas nuevas: {', '.join(nombres_originales)}"
             })
 
-        # Normalizar RUT
+        # RUT_NORM: RUT normalizado (formato uniforme) para poder cruzar este
+        # archivo con los archivos procesados de SEP y PIE.
         df['RUT_NORM'] = df[self.cols_actual['rut']].apply(normalize_rut)
 
         self.logger.info(f"Columnas mapeadas correctamente")
@@ -575,69 +652,90 @@ class BRPProcessor(BaseProcessor):
         return self.column_alerts
     
     def _load_processed_file(self, path: Path, tipo: str) -> pd.DataFrame:
-        """Carga archivo procesado (SEP o PIE) - CSV o Excel."""
+        """Carga archivo procesado (SEP o PIE) - CSV o Excel.
+
+        Estos archivos son la salida previa de otros procesadores. Solo se
+        necesita ubicar la columna de RUT y normalizarla (RUT_NORM) para poder
+        cruzarlos luego con el archivo MINEDUC.
+        """
         self.validate_file(path)
 
         if self.is_csv(path):
+            # UTF-8 con respaldo latin-1 para acentos.
             try:
                 df = pd.read_csv(str(path), encoding='utf-8')
             except UnicodeDecodeError:
                 df = pd.read_csv(str(path), encoding='latin-1')
         else:
             df = pd.read_excel(str(path), engine='openpyxl')
-        
-        # Buscar columna RUT
+
+        # Ubicar la primera columna cuyo nombre contenga 'rut'.
         rut_col = None
         for col in df.columns:
             if 'rut' in str(col).lower():
                 rut_col = col
                 break
-        
+
         if not rut_col:
             raise ProcessorError(f"Archivo {tipo} no tiene columna de RUT")
-        
+
+        # Clave de cruce normalizada.
         df['RUT_NORM'] = df[rut_col].apply(normalize_rut)
         return df
     
     def _build_hours_map(self, df_sep: pd.DataFrame, df_pie: pd.DataFrame) -> Dict:
-        """Construye mapa de horas por docente y tipo."""
+        """Construye mapa de horas por docente y tipo.
+
+        Recorre los archivos SEP y PIE y acumula por RUT las horas de cada tipo
+        de subvención. Resultado: {rut: {'SEP', 'PIE', 'SN', 'TOTAL'}}.
+        El SEP aporta horas SEP; el PIE aporta horas PIE y SN.
+        """
         horas_map = {}
-        
-        # Procesar SEP
+
+        # SEP: cada fila suma horas SEP al docente.
         for _, row in df_sep.iterrows():
             rut = row.get('RUT_NORM', '')
             if not rut:
                 continue
-            
+
+            # Inicializar la entrada del docente la primera vez que aparece.
             if rut not in horas_map:
                 horas_map[rut] = {'SEP': 0, 'PIE': 0, 'SN': 0, 'TOTAL': 0}
-            
+
+            # 'or 0' protege contra valores vacíos/None antes de float().
             sep_hours = float(row.get('SEP', 0) or 0)
             horas_map[rut]['SEP'] += sep_hours
             horas_map[rut]['TOTAL'] += sep_hours
-        
-        # Procesar PIE
+
+        # PIE: cada fila aporta horas PIE y horas SN (subvención normal).
         for _, row in df_pie.iterrows():
             rut = row.get('RUT_NORM', '')
             if not rut:
                 continue
-            
+
             if rut not in horas_map:
                 horas_map[rut] = {'SEP': 0, 'PIE': 0, 'SN': 0, 'TOTAL': 0}
-            
+
             pie_hours = float(row.get('PIE', 0) or 0)
             sn_hours = float(row.get('SN', 0) or 0)
-            
+
             horas_map[rut]['PIE'] += pie_hours
             horas_map[rut]['SN'] += sn_hours
             horas_map[rut]['TOTAL'] += pie_hours + sn_hours
-        
+
         return horas_map
     
     def _build_revision_list(self, horas_map, ruts_web, ruts_procesados, df_web, df_sep, df_pie) -> List[Dict]:
-        """Construye lista de docentes a revisar."""
+        """Construye lista de docentes a revisar.
+
+        Marca dos tipos de casos anómalos:
+          1. EXCEDE 44 HORAS: la suma SEP+PIE+SN supera el tope legal
+             (posible reemplazante o error de digitación).
+          2. SIN LIQUIDACIÓN: está en MINEDUC pero no aparece en SEP/PIE
+             (posible licencia, ingreso nuevo o falta en liquidaciones).
+        """
         revisar = []
-        
+
         # Columnas para obtener info de web_sostenedor
         col_nombres = self.cols_actual.get('nombres')
         col_ap1 = self.cols_actual.get('apellido1')
@@ -646,7 +744,12 @@ class BRPProcessor(BaseProcessor):
         col_horas = self.cols_actual.get('horas_contrato')
         
         def get_docente_info(rut):
-            """Obtiene info del docente desde web_sostenedor o archivos procesados."""
+            """Obtiene info del docente desde web_sostenedor o archivos procesados.
+
+            Prioriza los datos de MINEDUC (nombres/apellidos ya separados). Si el
+            docente no está allí, cae a los archivos SEP/PIE, cuyo campo 'nombre'
+            viene junto como "APELLIDO1 APELLIDO2 NOMBRES".
+            """
             # Primero buscar en web_sostenedor
             doc = df_web[df_web['RUT_NORM'] == rut]
             if len(doc) > 0:
@@ -667,15 +770,16 @@ class BRPProcessor(BaseProcessor):
                 if len(doc_sep) > 0 and 'nombre' in df_sep.columns:
                     nombre_completo = str(doc_sep.iloc[0].get('nombre', ''))
                     if nombre_completo and nombre_completo != 'nan':
-                        # El nombre viene como "APELLIDO1 APELLIDO2 NOMBRES"
+                        # Separar "APELLIDO1 APELLIDO2 NOMBRES": si hay 3+ palabras
+                        # se asume que las 2 primeras son apellidos.
                         partes = nombre_completo.split()
                         if len(partes) >= 3:
                             apellidos = f"{partes[0]} {partes[1]}"
                             nombre = ' '.join(partes[2:])
                         else:
                             nombre = nombre_completo
-                
-                # Si no encontró en SEP, buscar en PIE
+
+                # Si no encontró en SEP, buscar en PIE (misma lógica de parseo)
                 if not nombre:
                     doc_pie = df_pie[df_pie['RUT_NORM'] == rut]
                     if len(doc_pie) > 0 and 'nombre' in df_pie.columns:
@@ -688,18 +792,18 @@ class BRPProcessor(BaseProcessor):
                             else:
                                 nombre = nombre_completo
             
-            # Limpiar 'nan'
+            # Limpiar cadenas 'nan' provenientes de valores vacíos convertidos a str.
             nombre = '' if nombre == 'nan' else nombre
             apellidos = '' if apellidos == 'nan' or apellidos == 'nan nan' else apellidos
             tipo_pago = '' if tipo_pago == 'nan' else tipo_pago
             return nombre, apellidos, tipo_pago
-        
-        # 1. Docentes que exceden 44 horas
+
+        # 1. Docentes que exceden el tope de 44 horas.
         for rut, horas in horas_map.items():
             total = horas['TOTAL']
             if total > self.MAX_HORAS:
                 nombre, apellidos, tipo_pago = get_docente_info(rut)
-                # Si no hay tipo_pago pero excede horas, probablemente sea reemplazo
+                # Excede horas y no está en MINEDUC: casi seguro es un reemplazo.
                 if not tipo_pago and total > self.MAX_HORAS:
                     tipo_pago = '(No en MINEDUC - posible reemplazo)'
                 
@@ -718,7 +822,8 @@ class BRPProcessor(BaseProcessor):
                     'ACCION': 'Verificar si es reemplazante o error'
                 })
         
-        # 2. Docentes sin liquidación (en MINEDUC pero no en SEP/PIE)
+        # 2. Docentes sin liquidación: están en MINEDUC pero no en SEP/PIE
+        #    (diferencia de conjuntos de RUTs).
         sin_match = ruts_web - ruts_procesados
         for rut in sin_match:
             doc = df_web[df_web['RUT_NORM'] == rut]
@@ -768,19 +873,24 @@ class BRPProcessor(BaseProcessor):
         return revisar
     
     def _identify_multi_establishment(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Identifica docentes en múltiples establecimientos."""
+        """Identifica docentes en múltiples establecimientos.
+
+        Agrega por RUT el nº de RBD distintos y el total de horas de contrato,
+        y marca ES_MULTI=True cuando el docente trabaja en 2+ establecimientos.
+        """
         col_horas = self.cols_actual['horas_contrato']
         col_rbd = self.cols_actual['rbd']
-        
+
+        # nunique(rbd) = cantidad de establecimientos distintos por docente.
         stats = df.groupby('RUT_NORM').agg({
             col_rbd: 'nunique',
             col_horas: 'sum'
         }).reset_index()
         stats.columns = ['RUT_NORM', 'NUM_ESTABLECIMIENTOS', 'TOTAL_HORAS_MINEDUC']
-        
+
         df = df.merge(stats, on='RUT_NORM', how='left')
         df['ES_MULTI'] = df['NUM_ESTABLECIMIENTOS'] > 1
-        
+
         return df
     
     def _distribute_by_establishment(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -792,17 +902,20 @@ class BRPProcessor(BaseProcessor):
         col_total_recon = self.cols_actual.get('total_reconocimiento')
         col_total_tramo = self.cols_actual.get('total_tramo')
 
+        # Reconocimiento total por fila (o 0 si falta la columna crítica).
         if col_total_recon and col_total_recon in df.columns:
             df['RECONOCIMIENTO_DIST'] = df[col_total_recon].fillna(0).round(0)
         else:
             df['RECONOCIMIENTO_DIST'] = 0
 
+        # Tramo total por fila (o 0 si falta la columna crítica).
         if col_total_tramo and col_total_tramo in df.columns:
             df['TRAMO_DIST'] = df[col_total_tramo].fillna(0).round(0)
         else:
             df['TRAMO_DIST'] = 0
 
-        # Sub-componentes DAEM/CPEIP
+        # Sub-componentes DAEM (subvención) / CPEIP (transferencia) y prioritarios.
+        # Cada uno se copia tal cual (con 0 de respaldo si no existe la columna).
         for dist_col, src_key in [
             ('SUBV_RECON_DIST', 'subv_reconocimiento'),
             ('TRANSF_RECON_DIST', 'transf_reconocimiento'),
@@ -819,7 +932,16 @@ class BRPProcessor(BaseProcessor):
         return df
     
     def _classify_by_subvencion(self, df: pd.DataFrame, horas_map: Dict) -> pd.DataFrame:
-        """Clasifica BRP por tipo de subvención (SEP/PIE/NORMAL) y pagador (DAEM/CPEIP)."""
+        """Clasifica BRP por tipo de subvención (SEP/PIE/NORMAL) y pagador (DAEM/CPEIP).
+
+        Regla clave:
+          - La parte DAEM (subvención: recon. y tramo) se reparte por proporción
+            de horas SEP/PIE/NORMAL de cada docente.
+          - La parte CPEIP (transferencia) y los alumnos prioritarios van 100% a
+            NORMAL.
+        El reparto usa "resto exacto" para que la suma de las partes coincida
+        peso a peso con el total (evita descuadres por redondeo).
+        """
 
         # Columnas BRP totales
         brp_cols = [
@@ -836,6 +958,7 @@ class BRPProcessor(BaseProcessor):
             'CPEIP_PRIOR_SEP', 'CPEIP_PRIOR_PIE', 'CPEIP_PRIOR_NORMAL',
         ]
 
+        # Inicializar todas las columnas de salida en 0 antes de calcular fila a fila.
         for col in brp_cols + daem_cpeip_cols:
             df[col] = 0.0
 
@@ -852,17 +975,17 @@ class BRPProcessor(BaseProcessor):
             if not rut:
                 continue
 
-            # Obtener proporción de horas
+            # Horas del docente (default en 0 si no tiene registro en SEP/PIE).
             horas = horas_map.get(rut, {'SEP': 0, 'PIE': 0, 'SN': 0, 'TOTAL': 0})
             total_horas = horas['TOTAL']
 
-            # Exportar horas por subvención
+            # Dejar registradas las horas por subvención en la fila.
             df.at[idx, 'HORAS_SEP'] = horas['SEP']
             df.at[idx, 'HORAS_PIE'] = horas['PIE']
             df.at[idx, 'HORAS_SN'] = horas['SN']
 
             if total_horas == 0:
-                # Sin info de horas, todo va a NORMAL
+                # Sin horas no se puede prorratear: todo el monto va a NORMAL.
                 df.at[idx, 'BRP_RECONOCIMIENTO_NORMAL'] = recon_dist
                 df.at[idx, 'BRP_TRAMO_NORMAL'] = tramo_dist
                 df.at[idx, 'DAEM_RECON_NORMAL'] = subv_recon
@@ -872,12 +995,13 @@ class BRPProcessor(BaseProcessor):
                 df.at[idx, 'CPEIP_PRIOR_NORMAL'] = asig_prior
                 continue
 
-            # Calcular proporciones
+            # Proporción de horas de cada tipo sobre el total del docente.
             prop_sep = horas['SEP'] / total_horas
             prop_pie = horas['PIE'] / total_horas
 
-            # Distribuir con resto exacto: SEP y PIE se redondean,
-            # NORMAL = total - SEP - PIE (garantiza suma exacta)
+            # Reparte un monto en (SEP, PIE, NORMAL) con "resto exacto":
+            # SEP y PIE se redondean y NORMAL absorbe la diferencia, de modo que
+            # v_sep + v_pie + v_sn == total_val siempre (sin pérdidas por redondeo).
             def split3(total_val):
                 v_sep = round(total_val * prop_sep)
                 v_pie = round(total_val * prop_pie)
@@ -895,7 +1019,8 @@ class BRPProcessor(BaseProcessor):
             df.at[idx, 'CPEIP_RECON_PIE'] = 0
             df.at[idx, 'CPEIP_RECON_NORMAL'] = transf_recon
 
-            # BRP Reconocimiento total = DAEM + CPEIP
+            # BRP Reconocimiento total = parte DAEM (repartida) + parte CPEIP
+            # (que es 100% NORMAL, por eso solo se suma a la columna NORMAL).
             df.at[idx, 'BRP_RECONOCIMIENTO_SEP'] = s
             df.at[idx, 'BRP_RECONOCIMIENTO_PIE'] = p
             df.at[idx, 'BRP_RECONOCIMIENTO_NORMAL'] = n + transf_recon
@@ -921,23 +1046,24 @@ class BRPProcessor(BaseProcessor):
             df.at[idx, 'CPEIP_PRIOR_PIE'] = 0
             df.at[idx, 'CPEIP_PRIOR_NORMAL'] = asig_prior
 
-        # Totales DAEM por subvención
+        # --- Totales agregados (vectorizados sobre todo el df) ---
+        # DAEM por subvención = reconocimiento + tramo (ambos ya repartidos).
         df['TOTAL_DAEM_SEP'] = df['DAEM_RECON_SEP'] + df['DAEM_TRAMO_SEP']
         df['TOTAL_DAEM_PIE'] = df['DAEM_RECON_PIE'] + df['DAEM_TRAMO_PIE']
         df['TOTAL_DAEM_NORMAL'] = df['DAEM_RECON_NORMAL'] + df['DAEM_TRAMO_NORMAL']
 
-        # Totales CPEIP por subvención
+        # CPEIP por subvención = reconocimiento + tramo + alumnos prioritarios.
         df['TOTAL_CPEIP_SEP'] = df['CPEIP_RECON_SEP'] + df['CPEIP_TRAMO_SEP'] + df['CPEIP_PRIOR_SEP']
         df['TOTAL_CPEIP_PIE'] = df['CPEIP_RECON_PIE'] + df['CPEIP_TRAMO_PIE'] + df['CPEIP_PRIOR_PIE']
         df['TOTAL_CPEIP_NORMAL'] = df['CPEIP_RECON_NORMAL'] + df['CPEIP_TRAMO_NORMAL'] + df['CPEIP_PRIOR_NORMAL']
 
-        # Totales BRP por tipo (DAEM + CPEIP)
+        # BRP por tipo de subvención = lo que paga DAEM + lo que paga CPEIP.
         df['BRP_SEP'] = df['TOTAL_DAEM_SEP'] + df['TOTAL_CPEIP_SEP']
         df['BRP_PIE'] = df['TOTAL_DAEM_PIE'] + df['TOTAL_CPEIP_PIE']
         df['BRP_NORMAL'] = df['TOTAL_DAEM_NORMAL'] + df['TOTAL_CPEIP_NORMAL']
         df['BRP_TOTAL'] = df['BRP_SEP'] + df['BRP_PIE'] + df['BRP_NORMAL']
 
-        # Convertir a enteros
+        # Los montos son pesos: convertir todas las columnas de salida a enteros.
         int_cols = brp_cols + daem_cpeip_cols + [
             'TOTAL_DAEM_SEP', 'TOTAL_DAEM_PIE', 'TOTAL_DAEM_NORMAL',
             'TOTAL_CPEIP_SEP', 'TOTAL_CPEIP_PIE', 'TOTAL_CPEIP_NORMAL',
@@ -949,10 +1075,15 @@ class BRPProcessor(BaseProcessor):
         return df
     
     def _create_multi_establishment_sheet(self, df: pd.DataFrame) -> Optional[pd.DataFrame]:
-        """Crea hoja con desglose de docentes que trabajan en 2+ establecimientos."""
+        """Crea hoja con desglose de docentes que trabajan en 2+ establecimientos.
+
+        Por cada docente multi-establecimiento genera una fila DETALLE por RBD y
+        una fila TOTAL_DOCENTE con la suma. Devuelve None si no aplica.
+        """
         if 'ES_MULTI' not in df.columns:
             return None
 
+        # Solo docentes marcados como multi-establecimiento.
         df_multi = df[df['ES_MULTI'] == True].copy()
         if df_multi.empty:
             return None
@@ -967,9 +1098,10 @@ class BRPProcessor(BaseProcessor):
 
         rows = []
         for rut in df_multi['RUT_NORM'].unique():
+            # Todas las filas (establecimientos) de este docente.
             filas_docente = df_multi[df_multi['RUT_NORM'] == rut]
 
-            # Info del docente
+            # Datos de identificación tomados de la primera fila.
             first = filas_docente.iloc[0]
             nombre = ''
             if col_nombres and col_nombres in filas_docente.columns:
@@ -983,11 +1115,13 @@ class BRPProcessor(BaseProcessor):
             if tramo == 'nan':
                 tramo = ''
 
+            # Acumuladores para la fila TOTAL_DOCENTE.
             total_reconocimiento = 0
             total_tramo = 0
             total_prioritarios = 0
             total_brp = 0
 
+            # Una fila DETALLE por cada establecimiento del docente.
             for _, fila in filas_docente.iterrows():
                 rbd_val = fila.get(col_rbd, '') if col_rbd else ''
                 horas_val = fila.get(col_horas, 0) if col_horas else 0
@@ -1017,7 +1151,7 @@ class BRPProcessor(BaseProcessor):
                     'TIPO_FILA': 'DETALLE',
                 })
 
-            # Fila de total por docente
+            # Fila resumen con el total del docente (todos sus establecimientos).
             rows.append({
                 'RUT': rut,
                 'NOMBRE': nombre,
@@ -1043,6 +1177,10 @@ class BRPProcessor(BaseProcessor):
     def detect_web_months(path: Path) -> Optional[List[str]]:
         """Detecta meses únicos en un archivo web sostenedor.
 
+        Útil para que la interfaz ofrezca al usuario los meses disponibles antes
+        de procesar. Lee solo lo necesario y nunca lanza excepción (devuelve None
+        ante cualquier problema).
+
         Returns:
             Lista de month numbers ordenados (ej: ['01', '03']), o None si no tiene columna Mes.
         """
@@ -1051,6 +1189,7 @@ class BRPProcessor(BaseProcessor):
 
             ext = path.suffix.lower()
             if ext == '.csv':
+                # Limitar filas: basta una muestra para conocer los meses presentes.
                 try:
                     df = pd.read_csv(str(path), encoding='utf-8', nrows=50000)
                 except UnicodeDecodeError:
@@ -1063,6 +1202,7 @@ class BRPProcessor(BaseProcessor):
             if not mes_col:
                 return None
 
+            # Normalizar cada valor de Mes a número ('01'-'12') y quedarse con únicos.
             raw_values = df[mes_col].dropna().unique()
             month_nums = set()
             for val in raw_values:
@@ -1071,10 +1211,11 @@ class BRPProcessor(BaseProcessor):
                     month_nums.add(num)
             return sorted(month_nums) if month_nums else None
         except Exception:
+            # Detección best-effort: cualquier fallo => "no se pudo determinar".
             return None
 
     def _log_statistics(self, df: pd.DataFrame) -> None:
-        """Genera estadísticas."""
+        """Genera estadísticas resumidas en el log (para auditoría/consola)."""
         total_docentes = df['RUT_NORM'].nunique()
 
         brp_sep = df['BRP_SEP'].sum()

@@ -1,5 +1,13 @@
 """
 Repositorio para operaciones CRUD sobre datos anuales de liquidación.
+
+Equivalente a BRPRepository pero para el flujo ANUAL: guarda y consulta un año
+completo de liquidaciones con detalle mes a mes (tablas ProcesamientoAnual y
+DocenteAnualDetalle). Provee además vistas agregadas para el dashboard anual:
+resumen, escuelas, tendencias mensuales y docentes multi-establecimiento.
+
+Al igual que el repositorio mensual, cada método maneja su propia sesión y las
+escrituras hacen commit / rollback + re-raise.
 """
 
 import re
@@ -13,6 +21,7 @@ from sqlalchemy.orm import sessionmaker, Session
 
 from database.models import Base, ProcesamientoAnual, DocenteAnualDetalle
 
+# Patrón de año de 4 dígitos (validación de formato).
 _ANIO_PATTERN = re.compile(r"^\d{4}$")
 
 
@@ -22,9 +31,12 @@ class AnualRepository:
     """
 
     def __init__(self, db_path: str = "data/remupro.db"):
+        # Comparte el MISMO archivo SQLite que BRPRepository ("data/remupro.db"):
+        # ambos flujos (mensual y anual) conviven en la misma base de datos.
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # check_same_thread=False: permite uso multi-hilo desde la app web.
         self.engine = create_engine(
             f"sqlite:///{self.db_path}",
             echo=False,
@@ -37,6 +49,7 @@ class AnualRepository:
         return self.SessionLocal()
 
     def _validate_anio(self, anio: int) -> int:
+        """Valida que el año esté en un rango razonable (2000-2100)."""
         anio = int(anio)
         if anio < 2000 or anio > 2100:
             raise ValueError(f"Año invalido: {anio}")
@@ -60,12 +73,14 @@ class AnualRepository:
         session = self._get_session()
 
         try:
-            # Eliminar anterior del mismo año
+            # Upsert: reprocesar un año reemplaza por completo el resultado previo
+            # (se borra el anterior y sus detalles por cascada).
             anterior = session.query(ProcesamientoAnual).filter_by(anio=anio).first()
             if anterior:
                 session.delete(anterior)
                 session.commit()
 
+            # Totales del año. Cada suma tolera la ausencia de la columna.
             brp_total = df_mensual['BRP'].sum() if 'BRP' in df_mensual.columns else 0
             haberes_total = df_mensual['TOTAL_HABERES'].sum() if 'TOTAL_HABERES' in df_mensual.columns else 0
             liquido_total = df_mensual['LIQUIDO_NETO'].sum() if 'LIQUIDO_NETO' in df_mensual.columns else 0
@@ -84,11 +99,13 @@ class AnualRepository:
                 notas=notas,
             )
             session.add(procesamiento)
-            session.flush()
+            session.flush()  # flush para obtener el ID antes de insertar detalles
 
-            # Guardar detalles
+            # Guardar una fila de detalle por cada registro docente-mes.
+            # float(x or 0) normaliza None/NaN a 0.0 antes de persistir.
             for _, row in df_mensual.iterrows():
                 rut = row.get('RUT_NORM', '')
+                # Sin RUT no se puede identificar al docente: se omite la fila.
                 if not rut:
                     continue
                 detalle = DocenteAnualDetalle(
@@ -252,7 +269,9 @@ class AnualRepository:
              .order_by(DocenteAnualDetalle.mes)\
              .all()
 
-            # Calcular BRP por tipo de subvención
+            # Segunda consulta: BRP por (mes, tipo de subvención). Se hace aparte
+            # y luego se combina en memoria para poder exponer, para cada mes,
+            # una columna por tipo (SEP/PIE/NORMAL/EIB) sin un pivote en SQL.
             tipo_rows = session.query(
                 DocenteAnualDetalle.mes,
                 DocenteAnualDetalle.tipo_subvencion,
@@ -261,6 +280,7 @@ class AnualRepository:
              .group_by(DocenteAnualDetalle.mes, DocenteAnualDetalle.tipo_subvencion)\
              .all()
 
+            # tipo_map[mes][tipo] = BRP acumulado, para consultarlo al armar la salida.
             tipo_map: Dict[str, Dict[str, float]] = {}
             for tr in tipo_rows:
                 if tr.mes not in tipo_map:
@@ -292,7 +312,9 @@ class AnualRepository:
             if not proc:
                 return []
 
-            # RUTs con 2+ RBDs distintos (excluir vacío y DEM)
+            # RUTs con 2+ RBDs distintos durante el año. Se excluye RBD vacío y
+            # 'DEM' (personal administrativo del DAEM) para no contarlos como si
+            # fueran un "colegio" adicional y generar falsos multi-establecimiento.
             sub = session.query(DocenteAnualDetalle.rut)\
                 .filter_by(procesamiento_id=proc.id)\
                 .filter(DocenteAnualDetalle.rbd != '')\
@@ -307,6 +329,8 @@ class AnualRepository:
                 .order_by(DocenteAnualDetalle.rut, DocenteAnualDetalle.rbd, DocenteAnualDetalle.mes)\
                 .all()
 
+            # Agrupar en dos niveles: por RUT y, dentro de cada docente, por RBD.
+            # Para cada establecimiento se acumulan los meses y el BRP del año.
             grouped: Dict[str, Dict[str, Any]] = {}
             for d in detalles:
                 if d.rut not in grouped:
@@ -328,6 +352,7 @@ class AnualRepository:
                 grouped[d.rut]['establecimientos'][rbd_key]['brp_total'] += (d.brp or 0)
                 grouped[d.rut]['total_brp'] += (d.brp or 0)
 
+            # Convertir el dict interno de establecimientos a lista para la salida.
             result = []
             for rut, data in grouped.items():
                 data['establecimientos'] = list(data['establecimientos'].values())

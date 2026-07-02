@@ -2,6 +2,10 @@
 Procesador Integrado - Procesa SEP, PIE y BRP en un solo flujo.
 
 Orquesta los procesadores individuales y genera auditoría completa.
+
+A diferencia del Lote Anual (que corre 12 meses), este procesa UN período: toma los
+archivos brutos SEP y PIE, los procesa, distribuye el BRP cruzándolos con el web
+sostenedor, y va registrando cada paso en un AuditLog para trazabilidad.
 """
 
 import logging
@@ -28,9 +32,11 @@ class IntegradoProcessor(BaseProcessor):
 
     def __init__(self):
         super().__init__()
+        # Sub-procesadores reutilizables para cada etapa del flujo integrado.
         self.sep_processor = SEPProcessor()
         self.pie_processor = PIEProcessor()
         self.brp_processor = BRPProcessor()
+        # Bitácora de auditoría: acumula eventos (info/warning/error) de todo el proceso.
         self.audit = AuditLog()
 
     def process_file(
@@ -68,17 +74,19 @@ class IntegradoProcessor(BaseProcessor):
             Tupla (DataFrame resultado, AuditLog)
         """
         self.audit.start()
-        # Track intermediate temp files for cleanup
+        # Lista de archivos intermedios (SEP/PIE procesados) que hay que limpiar al final.
         _temp_files_to_cleanup = []
         self._intermediate_paths: List[Path] = []
 
+        # El flujo avanza en etapas y cada tramo reporta un rango de la barra de progreso.
         try:
             # 1. Validar archivos de entrada (0-5%)
             progress_callback(0, "Validando archivos de entrada...")
             self._validate_inputs(sep_bruto_path, pie_bruto_path, web_sostenedor_path)
             progress_callback(5, "Archivos validados correctamente")
 
-            # 2. Procesar SEP bruto (5-30%)
+            # 2. Procesar SEP bruto (5-30%). El lambda mapea el progreso interno del
+            #    sub-procesador (0-100) al tramo 5-30 de la barra global.
             progress_callback(5, "Procesando archivo SEP...")
             sep_procesado_path = self._process_sep(
                 sep_bruto_path,
@@ -102,7 +110,8 @@ class IntegradoProcessor(BaseProcessor):
                 f"Archivo PIE procesado: {pie_bruto_path.name}"
             )
 
-            # 4. Distribuir BRP (55-90%)
+            # 4. Distribuir BRP (55-90%): cruza web + SEP + PIE procesados y reparte el
+            #    bono por subvención. Aquí se produce el DataFrame de resultado.
             progress_callback(55, "Distribuyendo BRP...")
             df_result = self._process_brp(
                 web_sostenedor_path,
@@ -132,6 +141,7 @@ class IntegradoProcessor(BaseProcessor):
             return df_result, self.audit
 
         except Exception as e:
+            # Cualquier fallo se deja registrado en la auditoría antes de propagarlo.
             self.audit.error(
                 AuditLog.TIPO_PROCESO,
                 f"Error en procesamiento integrado: {str(e)}"
@@ -139,10 +149,12 @@ class IntegradoProcessor(BaseProcessor):
             self.audit.end()
             raise
         finally:
+            # keep_intermediates=True: conservar los SEP/PIE procesados (p. ej. para
+            # depurar o reutilizarlos) exponiéndolos vía get_intermediate_paths().
             if keep_intermediates:
                 self._intermediate_paths = list(_temp_files_to_cleanup)
             else:
-                # Clean up intermediate temp files containing sensitive salary data
+                # Por defecto se borran: son temporales con datos sensibles de sueldos.
                 for tmp_path in _temp_files_to_cleanup:
                     try:
                         if tmp_path and tmp_path.exists():
@@ -156,7 +168,8 @@ class IntegradoProcessor(BaseProcessor):
         pie_path: Path,
         web_path: Path
     ) -> None:
-        """Valida los archivos de entrada."""
+        """Valida los archivos de entrada; corta el proceso si alguno es inválido."""
+        # Se valida cada archivo requerido y se deja constancia en la auditoría.
         for path, nombre in [(sep_path, 'SEP'), (pie_path, 'PIE'), (web_path, 'MINEDUC')]:
             try:
                 self.validate_file(path)
@@ -177,8 +190,8 @@ class IntegradoProcessor(BaseProcessor):
         input_path: Path,
         progress_callback: ProgressCallback
     ) -> Path:
-        """Procesa archivo SEP bruto."""
-        # Crear archivo temporal para resultado
+        """Procesa el SEP bruto y devuelve la ruta del archivo procesado (temporal)."""
+        # Archivo temporal de salida; delete=False para poder leerlo en etapas siguientes.
         tmp = tempfile.NamedTemporaryFile(suffix='_sep_procesado.xlsx', delete=False)
         output_path = Path(tmp.name)
         tmp.close()
@@ -198,7 +211,8 @@ class IntegradoProcessor(BaseProcessor):
         input_path: Path,
         progress_callback: ProgressCallback
     ) -> Path:
-        """Procesa archivo PIE bruto."""
+        """Procesa el PIE bruto y devuelve la ruta del archivo procesado (temporal)."""
+        # Mismo patrón que _process_sep: temporal de salida que se reutiliza más adelante.
         tmp = tempfile.NamedTemporaryFile(suffix='_pie_procesado.xlsx', delete=False)
         output_path = Path(tmp.name)
         tmp.close()
@@ -235,10 +249,10 @@ class IntegradoProcessor(BaseProcessor):
                 tipo_pago_filter=tipo_pago_filter,
             )
 
-            # Leer resultado
+            # Leer la hoja con la distribución del BRP calculada por el sub-procesador.
             df = pd.read_excel(output_path, sheet_name='BRP_DISTRIBUIDO', engine='openpyxl')
 
-            # Registrar estadísticas
+            # Registrar el total distribuido en la auditoría.
             brp_total = df['BRP_TOTAL'].sum() if 'BRP_TOTAL' in df.columns else 0
             self.audit.info(
                 AuditLog.TIPO_PROCESO,
@@ -246,7 +260,8 @@ class IntegradoProcessor(BaseProcessor):
                 brp_total=brp_total
             )
 
-            # Registrar casos de revisión del BRP processor
+            # Trasladar a la auditoría los casos que el BRP marcó para revisión manual
+            # (docentes que superan 44 hrs o que no tienen liquidación).
             if self.brp_processor.docentes_revisar:
                 for caso in self.brp_processor.docentes_revisar:
                     if caso.get('MOTIVO') == 'EXCEDE 44 HORAS':
@@ -265,7 +280,8 @@ class IntegradoProcessor(BaseProcessor):
                             rut=caso.get('RUT')
                         )
 
-            # Propagar alertas de columnas al audit log
+            # Propagar al audit log las alertas de columnas del BRP (p. ej. columnas de
+            # salario faltantes): nivel 'error' → warning; el resto → info.
             for alert in self.brp_processor.get_column_alerts():
                 if alert['nivel'] == 'error':
                     self.audit.warning(AuditLog.TIPO_COLUMNA_FALTANTE, alert['mensaje'])
@@ -282,10 +298,16 @@ class IntegradoProcessor(BaseProcessor):
             raise
 
     def _identify_eib_teachers(self, df: pd.DataFrame) -> None:
-        """Identifica docentes con BRP = 0 (posibles EIB)."""
+        """
+        Identifica docentes con BRP = 0 (posibles EIB).
+
+        Un BRP en $0 suele indicar un docente EIB (Educación Intercultural Bilingüe),
+        que se paga por otra vía; se listan en la auditoría para revisión posterior.
+        """
         if 'BRP_TOTAL' not in df.columns:
             return
 
+        # BRP_TOTAL == 0 → candidato a EIB.
         df_eib = df[df['BRP_TOTAL'] == 0]
 
         if df_eib.empty:
@@ -301,7 +323,7 @@ class IntegradoProcessor(BaseProcessor):
             cantidad=len(df_eib)
         )
 
-        # Identificar columna RUT
+        # Ubicar la columna de RUT: preferir 'RUT_NORM'; si no, la primera que lo tenga.
         rut_col = 'RUT_NORM' if 'RUT_NORM' in df.columns else None
         if not rut_col:
             for col in df.columns:
@@ -309,6 +331,7 @@ class IntegradoProcessor(BaseProcessor):
                     rut_col = col
                     break
 
+        # Ubicar la columna de nombre de forma flexible.
         nombre_col = None
         for col in df.columns:
             if 'nombre' in col.lower():
@@ -328,8 +351,8 @@ class IntegradoProcessor(BaseProcessor):
             )
 
     def _detect_unusual_values(self, df: pd.DataFrame) -> None:
-        """Detecta valores inusuales en los datos."""
-        # Verificar montos negativos
+        """Detecta valores inusuales (negativos y outliers) y los reporta a la auditoría."""
+        # Montos negativos: no deberían existir en un BRP; se avisa por columna.
         for col in ['BRP_SEP', 'BRP_PIE', 'BRP_NORMAL', 'BRP_TOTAL']:
             if col in df.columns:
                 negativos = df[df[col] < 0]
@@ -341,7 +364,8 @@ class IntegradoProcessor(BaseProcessor):
                         cantidad=len(negativos)
                     )
 
-        # Verificar montos muy altos (outliers)
+        # Outliers: montos anormalmente altos, usando el criterio media + 3 desviaciones
+        # estándar (regla estadística habitual para señalar valores atípicos).
         if 'BRP_TOTAL' in df.columns:
             media = df['BRP_TOTAL'].mean()
             std = df['BRP_TOTAL'].std()
@@ -375,8 +399,8 @@ class IntegradoProcessor(BaseProcessor):
         Returns:
             Diccionario con horas por tipo de subvención por RUT
         """
-        # Este método permite acceder al mapa de horas después del procesamiento
-        # para guardarlo en la base de datos
+        # Expone el mapa de horas del BRP tras procesar, para persistirlo en la BD.
+        # getattr con default {} evita fallar si el BRP aún no lo calculó.
         return getattr(self.brp_processor, '_horas_map', {})
 
     def get_docentes_revisar(self) -> list:

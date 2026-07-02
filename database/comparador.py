@@ -1,5 +1,17 @@
 """
 Comparador de meses para análisis de cambios entre períodos.
+
+Lee dos procesamientos mensuales desde el repositorio y detecta qué cambió de un
+mes a otro: docentes que ingresaron o salieron, variaciones significativas de
+monto BRP, cambios de establecimiento (RBD) y cambios en la distribución de
+horas. El resultado alimenta el informe Word y las vistas de comparación.
+
+DETALLE TÉCNICO IMPORTANTE:
+    Un mismo RUT puede aparecer en varias filas (docente en más de un colegio).
+    Al indexar por RUT con set_index, df.loc[rut, col] devuelve un ESCALAR si el
+    RUT es único, pero una pandas.Series si está repetido. Por eso a lo largo del
+    módulo se comprueba 'isinstance(x, pd.Series)' y se suma (montos/horas) o se
+    toma el primero (nombre) según corresponda.
 """
 
 from typing import Dict, List, Any, Optional
@@ -15,7 +27,8 @@ class ComparadorMeses:
     cambios de establecimiento y variaciones en horas.
     """
 
-    # Umbral para considerar un cambio de monto como significativo
+    # Solo se reportan variaciones de BRP cuyo cambio absoluto sea >= a este
+    # porcentaje; por debajo se consideran fluctuaciones normales y se ignoran.
     UMBRAL_CAMBIO_PORCENTAJE = 10.0  # 10%
 
     def __init__(self, repository: BRPRepository):
@@ -45,19 +58,22 @@ class ComparadorMeses:
         df_anterior = self.repo.obtener_datos_mes(mes_anterior)
         df_actual = self.repo.obtener_datos_mes(mes_actual)
 
+        # Si falta alguno de los dos meses, no hay nada que comparar.
         if df_anterior.empty or df_actual.empty:
             return self._empty_result()
 
-        # Obtener conjuntos de RUTs
+        # Comparar poblaciones de docentes usando operaciones de conjuntos sobre RUT:
+        #   nuevos    = están en el actual pero no en el anterior
+        #   salieron  = estaban en el anterior pero no en el actual
+        #   comunes   = presentes en ambos (candidatos a tener cambios)
         ruts_anterior = set(df_anterior['rut'].unique())
         ruts_actual = set(df_actual['rut'].unique())
 
-        # Docentes nuevos y salientes
         ruts_nuevos = ruts_actual - ruts_anterior
         ruts_salieron = ruts_anterior - ruts_actual
         ruts_comunes = ruts_anterior & ruts_actual
 
-        # Preparar DataFrames indexados por RUT
+        # Indexar por RUT para poder acceder por docente con .loc en los detectores.
         df_ant_idx = df_anterior.set_index('rut')
         df_act_idx = df_actual.set_index('rut')
 
@@ -122,12 +138,16 @@ class ComparadorMeses:
                 monto_ant = df_ant.loc[rut, 'brp_total']
                 monto_act = df_act.loc[rut, 'brp_total']
 
-                # Manejar series si hay múltiples entradas
+                # Si el RUT está repetido (multi-colegio), .loc devuelve una Series;
+                # se suma para obtener el BRP total del docente en el mes.
                 if isinstance(monto_ant, pd.Series):
                     monto_ant = monto_ant.sum()
                 if isinstance(monto_act, pd.Series):
                     monto_act = monto_act.sum()
 
+                # Variación porcentual respecto del mes anterior. Casos borde:
+                #   - anterior 0 y actual > 0: se fija 100% (alta desde cero)
+                #   - ambos 0: sin cambio relevante, se omite
                 if monto_ant > 0:
                     cambio_pct = ((monto_act - monto_ant) / monto_ant) * 100
                 elif monto_act > 0:
@@ -135,6 +155,7 @@ class ComparadorMeses:
                 else:
                     continue
 
+                # Solo interesan los cambios que superan el umbral configurado.
                 if abs(cambio_pct) >= self.UMBRAL_CAMBIO_PORCENTAJE:
                     nombre_ant = df_ant.loc[rut, 'nombre']
                     if isinstance(nombre_ant, pd.Series):
@@ -149,9 +170,10 @@ class ComparadorMeses:
                         'cambio_porcentaje': round(cambio_pct, 1)
                     })
             except (KeyError, TypeError):
+                # Datos ausentes o no numéricos para este RUT: se ignora y sigue.
                 continue
 
-        # Ordenar por magnitud de cambio
+        # Ordenar de mayor a menor magnitud de cambio (los más llamativos primero).
         cambios.sort(key=lambda x: abs(x['cambio_porcentaje']), reverse=True)
         return cambios
 
@@ -169,7 +191,10 @@ class ComparadorMeses:
                 rbd_ant = df_ant.loc[rut, 'rbd']
                 rbd_act = df_act.loc[rut, 'rbd']
 
-                # Manejar series
+                # Normalizar a CONJUNTO de RBDs en cada mes: un docente puede estar
+                # en varios colegios, así que se compara el conjunto completo (no un
+                # único valor). Si es Series -> set de valores únicos; si es escalar
+                # -> set de un elemento.
                 if isinstance(rbd_ant, pd.Series):
                     rbd_ant = set(rbd_ant.unique())
                 else:
@@ -180,6 +205,7 @@ class ComparadorMeses:
                 else:
                     rbd_act = {rbd_act}
 
+                # Hubo cambio de establecimiento si los conjuntos difieren.
                 if rbd_ant != rbd_act:
                     nombre = df_ant.loc[rut, 'nombre']
                     if isinstance(nombre, pd.Series):
@@ -207,7 +233,7 @@ class ComparadorMeses:
 
         for rut in ruts_comunes:
             try:
-                # Obtener horas anteriores
+                # Horas del mes anterior por tipo (0 si la columna no existe).
                 sep_ant = df_ant.loc[rut, 'horas_sep'] if 'horas_sep' in df_ant.columns else 0
                 pie_ant = df_ant.loc[rut, 'horas_pie'] if 'horas_pie' in df_ant.columns else 0
                 sn_ant = df_ant.loc[rut, 'horas_sn'] if 'horas_sn' in df_ant.columns else 0
@@ -231,7 +257,8 @@ class ComparadorMeses:
                 if isinstance(sn_act, pd.Series):
                     sn_act = sn_act.sum()
 
-                # Verificar si hay cambio significativo
+                # Cualquier diferencia (aunque sea mínima) en la distribución de
+                # horas se reporta; a diferencia de los montos, aquí no hay umbral.
                 diff_sep = abs(sep_act - sep_ant)
                 diff_pie = abs(pie_act - pie_ant)
                 diff_sn = abs(sn_act - sn_ant)
@@ -294,6 +321,7 @@ class ComparadorMeses:
         if not resumen_ant or not resumen_act:
             return {}
 
+        # Variación total de BRP entre ambos meses (evita dividir por cero).
         brp_ant = resumen_ant.get('brp_total', 0)
         brp_act = resumen_act.get('brp_total', 0)
         diff_brp = brp_act - brp_ant
