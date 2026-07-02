@@ -44,6 +44,8 @@ class AnualBatchProcessor:
 
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
+        # Avisos de clasificación de archivos (mes/tipo no detectado, etc.) para la UI.
+        self.classification_warnings: List[str] = []
 
     def classify_files(
         self, files: List[Tuple[str, Path]]
@@ -69,6 +71,7 @@ class AnualBatchProcessor:
         unclassified: List[Tuple[str, Path]] = []
         self._anual_file = None
         self._horas_file: Optional[Tuple[str, Path]] = None
+        self.classification_warnings = []
 
         for filename, path in files:
             month = detect_month_from_filename(filename)
@@ -85,9 +88,13 @@ class AnualBatchProcessor:
                 continue
 
             if not month:
-                self.logger.warning(
-                    f"No se pudo clasificar mes: {filename} (tipo={ftype})"
+                msg = (
+                    f"`{filename}` (tipo {ftype.upper()}) no tiene un mes reconocible "
+                    f"en el nombre; NO se incluirá en el consolidado. "
+                    f"Renómbralo incluyendo el mes (ej: {ftype}_enero_2026.xlsx)."
                 )
+                self.classification_warnings.append(msg)
+                self.logger.warning(f"No se pudo clasificar mes: {filename} (tipo={ftype})")
                 continue
 
             if month not in monthly:
@@ -113,6 +120,15 @@ class AnualBatchProcessor:
             if self._is_horas_file(path):
                 self.logger.info(f"Archivo de horas por subvención detectado: {filename}")
                 self._horas_file = (filename, path)
+            elif self._looks_like_horas_missing_mes(path):
+                msg = (
+                    f"`{filename}` parece un archivo de horas (tiene RUT/SEP/PIE/SN) "
+                    f"pero le falta la columna **Mes**; sin ella no se pueden asignar "
+                    f"las horas a cada mes y se usarán horas estimadas por tipo de "
+                    f"contrato. Agrega una columna 'Mes'."
+                )
+                self.classification_warnings.append(msg)
+                self.logger.warning(f"Archivo de horas sin columna Mes: {filename}")
             else:
                 remaining_unclassified.append((filename, path))
 
@@ -137,6 +153,10 @@ class AnualBatchProcessor:
                             existing.pre_processed = ms.pre_processed
                 break  # Solo un archivo anual
             else:
+                self.classification_warnings.append(
+                    f"`{filename}` no se pudo clasificar (ni tipo SEP/PIE/EIB/WEB por "
+                    f"nombre, ni archivo de horas, ni anual consolidado); se ignorará."
+                )
                 self.logger.warning(
                     f"No se pudo clasificar tipo: {filename}"
                 )
@@ -170,6 +190,30 @@ class AnualBatchProcessor:
             return has_mes and has_rut and has_sep and has_pie and has_sn
         except Exception as e:
             self.logger.debug(f"Error detectando archivo de horas: {e}")
+            return False
+
+    def _looks_like_horas_missing_mes(self, path: Path) -> bool:
+        """
+        Detecta un archivo que parece de horas (RUT + SEP + PIE + SN) pero SIN 'Mes'.
+
+        Sirve para avisar al usuario: sin la columna Mes no se pueden asignar las
+        horas reales a cada mes y el sistema cae a horas estimadas.
+        """
+        try:
+            ext = path.suffix.lower()
+            if ext == '.csv':
+                df = pd.read_csv(str(path), nrows=5, encoding='latin-1')
+            else:
+                df = pd.read_excel(str(path), nrows=5, engine='openpyxl')
+            cols_lower = {str(c).lower().strip() for c in df.columns}
+            has_mes = any('mes' == c for c in cols_lower)
+            has_rut = any('rut' in c for c in cols_lower)
+            has_sep = any(c == 'sep' for c in cols_lower)
+            has_pie = any(c == 'pie' for c in cols_lower)
+            has_sn = any(c == 'sn' for c in cols_lower)
+            return has_rut and has_sep and has_pie and has_sn and not has_mes
+        except Exception as e:
+            self.logger.debug(f"Error detectando archivo de horas sin Mes: {e}")
             return False
 
     def _is_anual_consolidado(self, path: Path) -> bool:

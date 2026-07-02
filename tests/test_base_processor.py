@@ -151,6 +151,49 @@ class TestProrateColumns:
         assert "NO_EXISTE_X" not in result.columns
 
 
+# ── column_alerts: columnas especiales faltantes ──────────────────────
+
+class TestMissingSpecialColumns:
+    def test_missing_special_generates_alert(self, proc):
+        # 'Aporte Adicional AFP' está en SPECIAL_SALARY_COLUMNS y falta en el df
+        df = pd.DataFrame({
+            "SUELDO BASE": [1000],
+            "horas": [20],
+            "total": [40],
+        })
+        proc.prorate_columns(
+            df, ["SUELDO BASE", "Aporte Adicional AFP"], "horas", "total", "_SEP"
+        )
+        alerts = proc.get_column_alerts()
+        keys = [a["columna_key"] for a in alerts]
+        assert "Aporte Adicional AFP" in keys
+        assert all(a["tipo"] == "columna_salario_faltante" for a in alerts)
+
+    def test_missing_non_special_no_alert(self, proc):
+        # Una columna que NO es especial no debe generar alerta
+        df = pd.DataFrame({"horas": [20], "total": [40]})
+        proc.prorate_columns(
+            df, ["ASIGNACION RESPONSABILIDAD"], "horas", "total", "_SEP"
+        )
+        assert proc.get_column_alerts() == []
+
+    def test_alerts_deduped(self, proc):
+        df = pd.DataFrame({"horas": [20], "total": [40]})
+        proc.prorate_columns(df, ["Aporte Adicional AFP"], "horas", "total", "_SEP")
+        proc.prorate_columns(df, ["Aporte Adicional AFP"], "horas", "total", "_PIE")
+        keys = [a["columna_key"] for a in proc.get_column_alerts()]
+        assert keys.count("Aporte Adicional AFP") == 1
+
+    def test_no_alerts_when_all_present(self, proc):
+        df = pd.DataFrame({
+            "SUELDO BASE": [1000],
+            "horas": [20],
+            "total": [40],
+        })
+        proc.prorate_columns(df, ["SUELDO BASE"], "horas", "total", "_SEP")
+        assert proc.get_column_alerts() == []
+
+
 # ── validate_hours ────────────────────────────────────────────────────
 
 class TestValidateHours:

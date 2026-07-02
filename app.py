@@ -1423,11 +1423,19 @@ def show_column_alerts(column_alerts):
         return
     criticas = [a for a in column_alerts if a['nivel'] == 'error']
     nuevas = [a for a in column_alerts if a['tipo'] == 'columna_nueva']
+    salario_faltante = [a for a in column_alerts if a['tipo'] == 'columna_salario_faltante']
 
     if criticas:
         for a in criticas:
             warning_box(f"<b>Columna no encontrada:</b> {a['columna_nombre']}<br>"
                         f"Los montos de este concepto serán $0.")
+    if salario_faltante:
+        nombres = ", ".join(a['columna_nombre'] for a in salario_faltante)
+        warning_box(f"<b>Columnas de salario no encontradas ({len(salario_faltante)}):</b> "
+                    f"{nombres}<br>"
+                    f"No se generará su prorrateo en el resultado. "
+                    f"Verifica que el nombre en la planilla coincida exactamente "
+                    f"con el configurado en <code>config/columns.py</code>.")
     if nuevas:
         for a in nuevas:
             lista = a.get('columnas_lista', [])
@@ -2440,6 +2448,8 @@ def tab_sep_pie():
             else:
                 success_box(f"Se procesaron **{len(df)}** registros correctamente")
                 st.toast(f"{modo} procesado: {len(df)} registros", icon="✅")
+
+                show_column_alerts(processor.get_column_alerts())
 
                 c1, c2 = st.columns(2)
                 with c1:
@@ -4551,6 +4561,13 @@ def _tab_lote_anual_single(file_tuples, tmp_paths, anio):
             f"📊 **Archivo anual consolidado detectado:** {anual_file[0]} — "
             f"se dividió automáticamente en archivos SEP/PIE sintéticos por mes."
         )
+
+    # Avisos de clasificación (mes/tipo no detectado, horas sin columna Mes)
+    classif_warnings = getattr(processor, 'classification_warnings', [])
+    if classif_warnings:
+        st.warning(f"⚠️ **{len(classif_warnings)} archivo(s) con problemas de detección:**")
+        for w in classif_warnings:
+            st.markdown(f"- {w}")
 
     # Mostrar grilla de detección
     st.markdown("##### Detección de archivos")
