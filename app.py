@@ -20,6 +20,9 @@ from reports import AuditLog, InformeWord
 from database import BRPRepository, ComparadorMeses
 from config.columns import format_rut, normalize_rut, detect_month_from_filename, detect_file_type, detect_year_from_filename, MESES_NUM_TO_NAME
 from config.escuelas import get_rbd_map, match_ubicacion
+# Versión y registro de actualizaciones (fuente única en config/version.py).
+# Alimenta tanto el número de versión visible como el aviso "Sistema actualizado".
+from config.version import APP_VERSION, latest_update
 import html as html_module
 import json
 import streamlit.components.v1 as st_components
@@ -44,7 +47,8 @@ def _sanitize_html(text: str) -> str:
 # CONFIGURACION
 # ============================================================================
 
-VERSION = "2.5.0"
+# La versión vive en config/version.py para tener un único lugar donde cambiarla.
+VERSION = APP_VERSION
 
 
 def fmt_clp(value, prefix='$'):
@@ -1415,6 +1419,81 @@ def add_school_names(df, rbd_col='RBD'):
         cols.insert(idx, 'ESCUELA')
         df = df[cols]
     return df
+
+
+def show_update_banner():
+    """Muestra el aviso "Sistema actualizado" que cada navegador puede descartar.
+
+    Cómo funciona (para acordarse el próximo mes):
+      - La info del aviso (versión, fecha, resumen) sale de config/version.py.
+        Para cambiar el aviso, edita ese archivo; NO hay que tocar esta función.
+      - El botón "Ya lo vi" guarda la versión vista en el localStorage del
+        navegador (clave 'remupro_last_seen_update'). Mientras esa versión
+        coincida con la actual, el aviso NO vuelve a aparecer.
+      - Cuando subas a una versión nueva en config/version.py, el aviso vuelve
+        a salir automáticamente (porque ya no coincide con lo guardado).
+
+    Importante: el localStorage solo recuerda "ya vi el aviso". NO guarda datos,
+    NO afecta cálculos ni archivos. Si alguien lo borra, el aviso reaparece una
+    vez y nada más. Es un recordatorio visual, aislado del resto del sistema.
+
+    Nota técnica: se usa un componente HTML porque Streamlit no da acceso directo
+    al localStorage del navegador. El componente se auto-oculta (colapsa su
+    iframe) si el navegador ya vio esta versión.
+    """
+    upd = latest_update()
+    if not upd.get("date"):
+        return  # Sin datos de actualización → no mostrar nada.
+
+    version = upd["version"]
+    fecha = upd["date"]
+    # Cada cambio del resumen se escapa para evitar romper el HTML / XSS.
+    items = "".join(
+        f"<li style='margin-bottom:4px'>{html_module.escape(str(s))}</li>"
+        for s in upd.get("summary", [])
+    )
+
+    # El componente decide del lado del navegador si mostrarse o no, según el
+    # localStorage. 'version' se inyecta como JSON para comparar de forma segura.
+    banner_html = f"""
+    <div id="rp-banner" style="display:none; font-family: system-ui, sans-serif;
+        border:1px solid #b6d4fe; background:#eef6ff; border-radius:10px;
+        padding:14px 16px; color:#0b3d66;">
+      <div style="font-weight:700; font-size:15px; margin-bottom:6px;">
+        🔔 Sistema actualizado — v{html_module.escape(str(version))}
+        <span style="font-weight:400; color:#3a6a92;">· {html_module.escape(str(fecha))}</span>
+      </div>
+      <ul style="margin:6px 0 12px 18px; padding:0; font-size:13px;">{items}</ul>
+      <button id="rp-ack" style="background:#0b66c3; color:#fff; border:none;
+        border-radius:8px; padding:8px 14px; font-size:13px; cursor:pointer;">
+        Ya lo vi
+      </button>
+    </div>
+    <script>
+    (function() {{
+      var CURRENT = {json.dumps(version)};
+      var KEY = 'remupro_last_seen_update';
+      var banner = document.getElementById('rp-banner');
+      // Colapsa el aviso y, si se puede, encoge el iframe para no dejar hueco.
+      function collapse() {{
+        banner.style.display = 'none';
+        try {{
+          window.frameElement.style.height = '0px';
+          window.frameElement.style.display = 'none';
+        }} catch (e) {{ /* iframe cross-origin: se oculta el contenido igual */ }}
+      }}
+      var seen = null;
+      try {{ seen = window.localStorage.getItem(KEY); }} catch (e) {{}}
+      if (seen === CURRENT) {{ collapse(); return; }}  // Ya lo vio → no molestar.
+      banner.style.display = 'block';
+      document.getElementById('rp-ack').addEventListener('click', function() {{
+        try {{ window.localStorage.setItem(KEY, CURRENT); }} catch (e) {{}}
+        collapse();
+      }});
+    }})();
+    </script>
+    """
+    st_components.html(banner_html, height=220)
 
 
 def show_column_alerts(column_alerts):
@@ -5825,6 +5904,9 @@ def main():
         show_sidebar_charts()
 
     show_header()
+
+    # Aviso "Sistema actualizado" (cada navegador lo descarta con "Ya lo vi").
+    show_update_banner()
 
     # Tabs dinámicos según preferencias
     tab_names = ["⚡ Todo en Uno", "📊 SEP / PIE / EIB", "📅 Lote Anual", "📉 Comparar Meses", "⏱ Horas x Contrato"]
