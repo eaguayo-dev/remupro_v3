@@ -4734,6 +4734,104 @@ def tab_lote_anual():
             _tab_lote_anual_single(file_tuples, tmp_paths, anio)
 
 
+def _grilla_confirmacion_lote_anual(file_tuples, shared_web=None):
+    """Grilla EDITABLE donde el usuario confirma/corrige Tipo y Mes de cada archivo.
+
+    Reemplaza a la grilla de solo-lectura en el caso estándar (SEP/PIE/WEB por
+    mes). Cada archivo llega con su Tipo y Mes autodetectados; el usuario puede
+    corregirlos con menús desplegables. Los que necesitan atención (sin tipo o
+    sin mes — incluida la ambigüedad 'sep' = SEP o septiembre) se marcan con ⚠️.
+
+    Devuelve un dict monthly (mes '01'..'12' -> MonthlyFileSet) reconstruido a
+    partir de lo CONFIRMADO por el usuario (no de la detección automática).
+    """
+    from processors.anual_batch import MonthlyFileSet
+
+    # Etiquetas legibles <-> códigos internos.
+    TIPO_LABELS = {'sep': 'SEP', 'pie': 'PIE (SN/PIE)', 'eib': 'EIB', 'web': 'WEB'}
+    LABEL_TO_TIPO = {v: k for k, v in TIPO_LABELS.items()}
+    LABEL_TO_TIPO['(ignorar)'] = None
+    IGNORAR = '(ignorar)'
+    SIN_MES = '(sin mes)'
+    MES_LABELS = [MESES_NUM_TO_NAME[f'{i:02d}'] for i in range(1, 13)]
+    MES_LABEL_TO_NUM = {MESES_NUM_TO_NAME[f'{i:02d}']: f'{i:02d}' for i in range(1, 13)}
+
+    path_by_name = {fn: fp for fn, fp in file_tuples}
+
+    # Fila por archivo con la detección inicial (que el usuario puede cambiar).
+    rows = []
+    for fname, _fpath in file_tuples:
+        t = detect_file_type(fname)
+        m = detect_month_from_filename(fname)
+        atencion = (t is None) or (m is None)
+        rows.append({
+            'Revisar': '⚠️' if atencion else '✓',
+            'Archivo': fname,
+            'Tipo': TIPO_LABELS.get(t, IGNORAR),
+            'Mes': MESES_NUM_TO_NAME.get(m, SIN_MES) if m else SIN_MES,
+        })
+    df = pd.DataFrame(rows)
+
+    st.markdown("##### ✅ Confirma la detección (corrige Tipo o Mes si algo quedó mal)")
+    st.caption(
+        "Revisa cada archivo y corrige el **Tipo** o el **Mes** con los menús. "
+        "Los ⚠️ necesitan tu atención (sin mes o sin tipo). Ojo con la ambigüedad "
+        "'sep' = subvención SEP o septiembre: aquí decides tú. Usa '(ignorar)' "
+        "para excluir un archivo."
+    )
+
+    edited = st.data_editor(
+        df, width='stretch', hide_index=True, key='anual_confirm_editor',
+        column_config={
+            'Revisar': st.column_config.TextColumn('', disabled=True, width='small'),
+            'Archivo': st.column_config.TextColumn('Archivo', disabled=True),
+            'Tipo': st.column_config.SelectboxColumn(
+                'Tipo', options=list(TIPO_LABELS.values()) + [IGNORAR], required=True),
+            'Mes': st.column_config.SelectboxColumn(
+                'Mes', options=[SIN_MES] + MES_LABELS, required=True),
+        },
+    )
+
+    # Reconstruir monthly desde lo confirmado por el usuario.
+    monthly = {}
+    sin_asignar = []
+    web_compartido = None
+    for _, r in edited.iterrows():
+        fname = r['Archivo']
+        fpath = path_by_name.get(fname)
+        tipo = LABEL_TO_TIPO.get(r['Tipo'])
+        mes = MES_LABEL_TO_NUM.get(r['Mes'])  # None si '(sin mes)'
+        if tipo is None:
+            continue  # el usuario lo marcó '(ignorar)'
+        if tipo == 'web' and mes is None:
+            web_compartido = (fname, fpath)  # web sin mes = compartido
+            continue
+        if mes is None:
+            sin_asignar.append(fname)  # falta el mes → no se puede ubicar
+            continue
+        ms = monthly.get(mes)
+        if ms is None:
+            ms = MonthlyFileSet(month=mes, month_name=MESES_NUM_TO_NAME.get(mes, mes))
+            monthly[mes] = ms
+        setattr(ms, tipo, (fname, fpath))  # ms.sep / ms.pie / ms.eib / ms.web
+
+    # Web compartido (de la grilla o el detectado por classify_files) → a los
+    # meses que no tengan web propio.
+    web_compartido = web_compartido or shared_web
+    if web_compartido:
+        for ms in monthly.values():
+            if not ms.web:
+                ms.web = web_compartido
+
+    if sin_asignar:
+        st.warning(
+            "⚠️ Sin mes asignado (no se incluirán hasta que elijas su mes arriba): "
+            + ", ".join(f"`{x}`" for x in sin_asignar)
+        )
+
+    return monthly
+
+
 def _tab_lote_anual_single(file_tuples, tmp_paths, anio):
     """Flujo de lote anual para un único año.
 
@@ -4771,49 +4869,58 @@ def _tab_lote_anual_single(file_tuples, tmp_paths, anio):
             f"se dividió automáticamente en archivos SEP/PIE sintéticos por mes."
         )
 
-    # Avisos de clasificación (mes/tipo no detectado, horas sin columna Mes)
-    classif_warnings = getattr(processor, 'classification_warnings', [])
-    if classif_warnings:
-        st.warning(f"⚠️ **{len(classif_warnings)} archivo(s) con problemas de detección:**")
-        for w in classif_warnings:
-            st.markdown(f"- {w}")
+    # En el caso ESTÁNDAR (sin anual consolidado ni archivo de horas) mostramos
+    # la grilla EDITABLE de confirmación y reconstruimos `monthly` desde lo que
+    # el usuario confirma. En el modo avanzado se conserva la grilla de solo
+    # lectura de siempre (el anual/horas ya arman los meses automáticamente).
+    usar_grilla_editable = (anual_file is None and horas_file is None)
 
-    # Mostrar grilla de detección
-    st.markdown("##### Detección de archivos")
-    grid_data = []
-    all_months = [f"{i:02d}" for i in range(1, 13)]
-    for m in all_months:
-        ms = monthly.get(m)
-        web_name = ''
-        if ms and ms.web:
-            web_name = ms.web[0]
-            if shared_web and ms.web[0] == shared_web[0]:
-                web_name = f"{web_name} (compartido)"
-        elif shared_web:
-            web_name = f"{shared_web[0]} (compartido)"
+    if usar_grilla_editable:
+        monthly = _grilla_confirmacion_lote_anual(file_tuples, shared_web)
+    else:
+        # Avisos de clasificación (mes/tipo no detectado, horas sin columna Mes)
+        classif_warnings = getattr(processor, 'classification_warnings', [])
+        if classif_warnings:
+            st.warning(f"⚠️ **{len(classif_warnings)} archivo(s) con problemas de detección:**")
+            for w in classif_warnings:
+                st.markdown(f"- {w}")
 
-        sep_name = ''
-        pie_name = ''
-        if ms and ms.sep:
-            sep_name = ms.sep[0]
-            if ms.pre_processed:
-                sep_name = f"{sep_name} (auto)"
-        if ms and ms.pie:
-            pie_name = ms.pie[0]
-            if ms.pre_processed:
-                pie_name = f"{pie_name} (auto)"
+        # Mostrar grilla de detección (solo lectura)
+        st.markdown("##### Detección de archivos")
+        grid_data = []
+        all_months = [f"{i:02d}" for i in range(1, 13)]
+        for m in all_months:
+            ms = monthly.get(m)
+            web_name = ''
+            if ms and ms.web:
+                web_name = ms.web[0]
+                if shared_web and ms.web[0] == shared_web[0]:
+                    web_name = f"{web_name} (compartido)"
+            elif shared_web:
+                web_name = f"{shared_web[0]} (compartido)"
 
-        row = {
-            'Mes': MESES_NUM_TO_NAME.get(m, m),
-            'SEP': sep_name,
-            'PIE': pie_name,
-            'WEB': web_name,
-            'EIB': ms.eib[0] if ms and ms.eib else '(opcional)',
-        }
-        grid_data.append(row)
+            sep_name = ''
+            pie_name = ''
+            if ms and ms.sep:
+                sep_name = ms.sep[0]
+                if ms.pre_processed:
+                    sep_name = f"{sep_name} (auto)"
+            if ms and ms.pie:
+                pie_name = ms.pie[0]
+                if ms.pre_processed:
+                    pie_name = f"{pie_name} (auto)"
 
-    df_grid = pd.DataFrame(grid_data)
-    st.dataframe(df_grid, width='stretch', hide_index=True)
+            row = {
+                'Mes': MESES_NUM_TO_NAME.get(m, m),
+                'SEP': sep_name,
+                'PIE': pie_name,
+                'WEB': web_name,
+                'EIB': ms.eib[0] if ms and ms.eib else '(opcional)',
+            }
+            grid_data.append(row)
+
+        df_grid = pd.DataFrame(grid_data)
+        st.dataframe(df_grid, width='stretch', hide_index=True)
 
     # Validar
     errors = processor.validate_monthly_sets(monthly)
