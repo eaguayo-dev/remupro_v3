@@ -1497,7 +1497,18 @@ def show_update_banner():
 
 
 def show_column_alerts(column_alerts):
-    """Muestra alertas de columnas con lista expandible para columnas nuevas."""
+    """Muestra las alertas de columnas que reporta un procesador.
+
+    Cada alerta es un dict con al menos 'tipo' y 'nivel'. Se distinguen tres
+    grupos, cada uno con su propio mensaje/estilo:
+      - nivel 'error': columna MINEDUC crítica ausente; su concepto quedará en
+        $0 (impacto directo en montos, por eso se avisa como advertencia).
+      - tipo 'columna_salario_faltante': falta una columna de salario, así que
+        no se genera su prorrateo; suele ser un nombre que no coincide con el
+        configurado en config/columns.py.
+      - tipo 'columna_nueva': el archivo trae columnas que el sistema aún no
+        procesa; se listan en un expander para poder registrarlas luego.
+    """
     if not column_alerts:
         return
     criticas = [a for a in column_alerts if a['nivel'] == 'error']
@@ -1529,7 +1540,14 @@ def show_column_alerts(column_alerts):
 
 
 def show_desglose_daem_cpeip(df, prefix=''):
-    """Muestra desglose DAEM/CPEIP con totales detallados por concepto."""
+    """Muestra el desglose de pagos separando DAEM (municipio) de CPEIP (ministerio).
+
+    Suma las columnas DAEM_* y CPEIP_* a lo largo de las tres subvenciones
+    (SEP/PIE/NORMAL) para cada concepto. DAEM = subvención que paga el
+    municipio (Reconocimiento + Tramo); CPEIP = transferencia del ministerio
+    (Reconocimiento + Tramo + Prioritarios). Las columnas ausentes se ignoran
+    con el chequeo `in cols`, para tolerar resultados parciales.
+    """
     cols = df.columns
 
     daem_recon = sum(df[f'DAEM_RECON_{s}'].sum() for s in ['SEP', 'PIE', 'NORMAL'] if f'DAEM_RECON_{s}' in cols)
@@ -2448,7 +2466,16 @@ def process_files(processor, inputs: list):
 # ============================================================================
 
 def tab_sep_pie():
-    """Pestaña de procesamiento SEP/PIE/EIB."""
+    """Pestaña de procesamiento individual SEP / PIE-NORMAL / EIB.
+
+    Permite subir un solo archivo y procesarlo con el procesador que
+    corresponda al modo elegido (SEPProcessor, PIEProcessor o EIBProcessor).
+    Valida la estructura del archivo antes de procesar: SEP/PIE exigen un
+    Excel con las hojas HORAS y TOTAL (CSV no sirve porque no tiene hojas);
+    EIB acepta CSV o Excel con una hoja que tenga la columna Jornada.
+    Tras procesar muestra métricas, alertas de columnas y un botón de
+    descarga del resultado. Para el flujo combinado ver tab_todo_en_uno.
+    """
 
     with st.expander("📖 ¿Cómo usar esta herramienta?", expanded=False):
         show_tutorial([
@@ -2551,8 +2578,17 @@ def tab_sep_pie():
 
 
 def tab_brp():
-    """Pestaña de distribución BRP."""
-    
+    """Pestaña de distribución BRP (Bonificación de Reconocimiento Profesional).
+
+    Requiere 3 archivos que se autodetectan por nombre: web* (planilla
+    MINEDUC/web sostenedor), *sep* (SEP ya procesado) y *pie*/*sn*/*normal*
+    (PIE/Normal ya procesado). Con ellos el BRPProcessor reparte el BRP que
+    paga el ministerio entre SEP, PIE y NORMAL. Si el web sostenedor trae
+    varios meses, deja elegir cuál procesar; también valida (por el nombre)
+    que SEP y PIE correspondan al mismo mes y ofrece un modo "solo validar".
+    Pestaña opcional: se muestra solo si el usuario la activa en la sidebar.
+    """
+
     with st.expander("📖 ¿Cómo usar esta herramienta?", expanded=False):
         show_tutorial([
             ("Procesa primero", "Ve a la pestaña SEP/PIE y procesa ambos archivos por separado."),
@@ -2626,7 +2662,9 @@ def tab_brp():
         warning_box("Carga los **3 archivos** para continuar")
         return
 
-    # Detectar meses del web sostenedor
+    # Detectar meses presentes en el web sostenedor. Se escribe a un archivo
+    # temporal porque detect_web_months trabaja sobre una ruta, no sobre bytes;
+    # el temporal se borra de inmediato tras la lectura.
     brp_month_filter = None
     try:
         tmp_web_detect = tempfile.NamedTemporaryFile(
@@ -3015,8 +3053,14 @@ def tab_brp():
 
 
 def tab_duplicados():
-    """Pestaña de procesamiento de duplicados."""
-    
+    """Pestaña de consolidación de registros duplicados.
+
+    Cruza un archivo principal (con columna DUPLICADOS) y uno complementario,
+    y usa DuplicadosProcessor para fusionar filas repetidas: suma los valores
+    numéricos y conserva la primera ocurrencia de los datos de texto.
+    Pestaña opcional: se muestra solo si el usuario la activa en la sidebar.
+    """
+
     with st.expander("📖 ¿Cómo usar esta herramienta?", expanded=False):
         show_tutorial([
             ("Carga el archivo principal", "Debe tener una columna llamada DUPLICADOS."),
@@ -3076,7 +3120,16 @@ def tab_duplicados():
 
 
 def tab_todo_en_uno():
-    """Pestaña de procesamiento integrado Todo en Uno."""
+    """Pestaña principal: procesamiento integrado de un mes ("Todo en Uno").
+
+    Es el flujo completo para un período. El usuario arrastra los 3 archivos
+    BRUTOS (SEP, PIE y web_sostenedor) — que se autodetectan por nombre — más
+    un archivo REM opcional para calcular horas disponibles por persona.
+    Con el mes indicado (YYYY-MM), IntegradoProcessor procesa SEP+PIE, reparte
+    BRP con el web sostenedor y consolida todo. El resultado incluye el Excel
+    procesado y un Informe Word con la auditoría; opcionalmente compara contra
+    meses previos guardados en el BRPRepository y persiste el mes procesado.
+    """
 
     with st.expander("📖 ¿Cómo usar esta herramienta?", expanded=False):
         show_tutorial([
@@ -3211,7 +3264,12 @@ def tab_todo_en_uno():
                 key="mes_anterior_select"
             )
 
-    # Filtro de Tipo de Pago (lee del web_sostenedor)
+    # Filtro de Tipo de Pago: se hace una lectura de vista previa del web
+    # sostenedor (limitada a 5000 filas por rendimiento) solo para poblar las
+    # opciones del filtro. Prueba UTF-8 y cae a latin-1 porque las planillas
+    # MINEDUC a veces vienen en esa codificación. seek(0) deja el buffer listo
+    # para la lectura real posterior. Los errores se ignoran: sin este filtro
+    # el procesamiento igual funciona (incluye todos los tipos de pago).
     tipos_pago_disponibles = []
     if f_web:
         try:
@@ -4549,7 +4607,19 @@ def _display_lote_anual_results(stats, excel_data, anio):
 
 
 def tab_lote_anual():
-    """Pestaña de procesamiento anual por lotes."""
+    """Pestaña de procesamiento anual por lotes (todos los meses de un año).
+
+    Acepta muchos archivos de una vez y los clasifica por nombre (web*, sep*,
+    *pie*/*sn*, *eib*) y por mes. Dos entradas posibles: (A) SEP+PIE por mes
+    más el web sostenedor, o (B) un archivo anual consolidado con columnas
+    Periodo y Tipo_de_Contrato. Opcionalmente admite un archivo de horas por
+    subvención (Mes, Rut, SEP, PIE, SN) para distribución real.
+
+    Detecta el año de cada archivo por su nombre: si aparecen varios años
+    distintos entra en modo multi-año (_tab_lote_anual_multi, procesa cada
+    año y arma un ZIP); si hay uno solo usa el flujo _tab_lote_anual_single.
+    El campo "Año (modo 1 año)" solo aplica al flujo de un año.
+    """
 
     with st.expander("📖 ¿Cómo usar el Lote Anual?", expanded=False):
         show_tutorial([
@@ -4613,7 +4683,15 @@ def tab_lote_anual():
 
 
 def _tab_lote_anual_single(file_tuples, tmp_paths, anio):
-    """Modo un solo año — flujo original de lote anual."""
+    """Flujo de lote anual para un único año.
+
+    Clasifica los archivos por mes (AnualBatchProcessor.classify_files),
+    muestra qué se detectó (web sostenedor compartido, archivo de horas por
+    subvención, archivo anual consolidado) y una grilla de validación; luego
+    procesa el año completo y presenta los resultados con
+    _display_lote_anual_results. tmp_paths se recibe para poder limpiar los
+    temporales al terminar.
+    """
     processor = AnualBatchProcessor()
     monthly = processor.classify_files(file_tuples)
 
@@ -4823,7 +4901,14 @@ def _tab_lote_anual_single(file_tuples, tmp_paths, anio):
 
 
 def _tab_lote_anual_multi(file_tuples, tmp_paths, detected_years, unique_years):
-    """Modo multi-año: procesa varios años secuencialmente y genera ZIP."""
+    """Flujo de lote anual cuando los archivos abarcan varios años.
+
+    detected_years agrupa los archivos por año (según el nombre) y unique_years
+    es la lista ordenada de años. Procesa cada año por separado y de forma
+    secuencial (con gc entre años para liberar memoria en lotes grandes) y
+    empaqueta todos los Excel resultantes en un ZIP para descargar de una vez,
+    además de mostrar el detalle por año.
+    """
     import gc
     import zipfile
 
@@ -5094,7 +5179,12 @@ def _detect_mes_from_rem(filename: str) -> int | None:
 
 
 def _classify_tipocontrato(tipo: str) -> str:
-    """Clasifica un tipo de contrato en SEP/PIE/EIB/SN."""
+    """Clasifica el texto libre de un tipo de contrato en SEP/PIE/EIB/SN.
+
+    Busca la palabra clave dentro del texto (mayúsculas, sin espacios extra).
+    'SN' (Subvención Normal) es el valor por defecto cuando el tipo está vacío,
+    no es texto, o no contiene ninguna de las subvenciones especiales.
+    """
     if not tipo or not isinstance(tipo, str):
         return 'SN'
     t = str(tipo).upper().strip()
@@ -5212,7 +5302,11 @@ def _process_rem_files(uploaded_files: list) -> tuple:
             except (ValueError, TypeError):
                 pass
 
-            # Resolver escuela/RBD
+            # Resolver el RBD de gasto a partir del nombre del departamento/
+            # ubicación del REM. match_ubicacion mapea ese texto a (nombre, RBD):
+            # el pseudo-RBD 'DEM' (Administración Central) se guarda como 'AC',
+            # y a los RBD reales se les quita el dígito verificador. Si no hay
+            # match se marca '?' y se agrega una alerta para revisión manual.
             depto = str(row.get(col_depto, '')).strip() if col_depto else ''
             if depto == 'nan':
                 depto = ''
@@ -5433,7 +5527,15 @@ def _render_horas_contrato_results(df_result, alertas):
 
 
 def tab_horas_contrato():
-    """Pestaña de procesamiento de horas por contrato desde archivos REM."""
+    """Pestaña de horas por contrato a partir de archivos REM mensuales.
+
+    Sube uno o más archivos REM (el mes se detecta del nombre con
+    _detect_mes_from_rem) y muestra una grilla de validación de la detección.
+    Al procesar (_process_rem_files) clasifica las horas de cada persona por
+    tipo de subvención (SEP/PIE/SN/EIB) según el campo 'tipocontrato'. El
+    resultado se cachea en session_state para que sobreviva a los reruns de
+    Streamlit y se renderiza con _render_horas_contrato_results.
+    """
 
     with st.expander("📖 ¿Cómo usar Horas por Contrato?", expanded=False):
         show_tutorial([
@@ -5514,7 +5616,14 @@ def tab_horas_contrato():
 # ============================================================================
 
 def tab_comparar_meses():
-    """Pestaña para comparar meses subiendo archivos BRP procesados."""
+    """Pestaña para comparar meses subiendo archivos BRP ya procesados.
+
+    Alternativa a la comparación por base de datos: se suben 2 o más Excel
+    generados por "Todo en Uno" (hoja BRP_DISTRIBUIDO) y se combinan. El mes
+    de cada archivo sale de la columna MES (si es única) o del nombre del
+    archivo. Con los datos unidos genera gráficos comparativos de la evolución
+    de BRP, docentes y escuelas entre los meses cargados.
+    """
 
     with st.expander("📖 ¿Cómo usar esta herramienta?", expanded=False):
         show_tutorial([
@@ -5867,7 +5976,17 @@ def tab_comparar_meses():
 # ============================================================================
 
 def main():
-    # Sidebar
+    """Punto de entrada de la aplicación Streamlit.
+
+    Arma la barra lateral (versión, listado de escuelas, preferencias de
+    pestañas visibles y gráficos del último procesamiento), muestra la
+    cabecera y el aviso de actualización, y luego construye dinámicamente
+    las pestañas principales. Cada pestaña delega en una función tab_*:
+    "Todo en Uno", "SEP/PIE/EIB", "Lote Anual", "Comparar Meses" y
+    "Horas x Contrato" siempre están visibles; "Distribución BRP" y
+    "Duplicados" solo aparecen si el usuario las activa en preferencias.
+    """
+    # Sidebar: información fija (versión, escuelas, glosario) + preferencias.
     with st.sidebar:
         st.markdown("### 📊 RemuPro")
         st.caption(f"v{VERSION}")
@@ -5908,7 +6027,8 @@ def main():
     # Aviso "Sistema actualizado" (cada navegador lo descarta con "Ya lo vi").
     show_update_banner()
 
-    # Tabs dinámicos según preferencias
+    # Pestañas dinámicas: las 5 base siempre; BRP/Duplicados según preferencias.
+    # tab_names y tab_funcs se mantienen en paralelo (mismo índice = misma pestaña).
     tab_names = ["⚡ Todo en Uno", "📊 SEP / PIE / EIB", "📅 Lote Anual", "📉 Comparar Meses", "⏱ Horas x Contrato"]
     tab_funcs = [tab_todo_en_uno, tab_sep_pie, tab_lote_anual, tab_comparar_meses, tab_horas_contrato]
 
