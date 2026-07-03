@@ -6135,19 +6135,46 @@ def tab_comparar_meses():
 # REMUNERACIONES x MES (prorrateo de sueldos SEP/PIE/SN, SIN BRP)
 # ============================================================================
 
-def _rem_excel_bytes(res: dict) -> BytesIO:
-    """Arma el Excel de salida con hojas HORAS/SEP/PIE/SN + NOTAS."""
+def _rem_read_any(file_obj, sheet=0):
+    """Lee un archivo subido (xlsx o csv) a DataFrame."""
+    if str(file_obj.name).lower().endswith('.csv'):
+        return pd.read_csv(BytesIO(file_obj.getvalue()), encoding='latin-1')
+    return pd.read_excel(BytesIO(file_obj.getvalue()), sheet_name=sheet, engine='openpyxl')
+
+
+def _rem_procesar_planilla(file_obj, horas_mes, tipo):
+    """Ensambla HORAS+TOTAL y corre el procesador SEP o PIE EXISTENTE.
+
+    Reproduce EXACTO el formato de siempre ('_procesado'): la planilla completa
+    + las columnas prorrateadas (SEP, o PIE/SN) + '_nuevo' + HORAS_VALIDAS.
+    - HORAS  = las horas del mes (del archivo único de horas por subvención).
+    - TOTAL  = la planilla de sueldo (su Hoja1).
+    Devuelve el DataFrame resultante.
+    """
+    from processors.sep import SEPProcessor
+    from processors.pie import PIEProcessor
+    total = pd.read_excel(BytesIO(file_obj.getvalue()), sheet_name='Hoja1', engine='openpyxl')
+    if 'rut' in total.columns and 'Rut' not in total.columns:
+        total = total.rename(columns={'rut': 'Rut'})
+    asm = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False); asm.close()
+    out = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False); out.close()
+    try:
+        with pd.ExcelWriter(asm.name, engine='openpyxl') as w:
+            horas_mes.to_excel(w, sheet_name='HORAS', index=False)
+            total.to_excel(w, sheet_name='TOTAL', index=False)
+        proc = SEPProcessor() if tipo == 'sep' else PIEProcessor()
+        proc.process_file(Path(asm.name), Path(out.name), lambda v, m: None)
+        return pd.read_excel(out.name, engine='openpyxl')
+    finally:
+        _cleanup_temp_files(Path(asm.name), Path(out.name))
+
+
+def _rem_excel_bytes(sheets: dict) -> BytesIO:
+    """Excel de salida: una hoja por planilla procesada (formato '_procesado')."""
     buf = BytesIO()
     with pd.ExcelWriter(buf, engine='openpyxl') as w:
-        for k in ['HORAS', 'SEP', 'PIE', 'SN']:
-            df = res.get(k)
-            if df is not None and not df.empty:
-                df.to_excel(w, sheet_name=k, index=False)
-        notas = list(res.get('_notas_columnas', []))
-        avisos = list(res.get('_avisos', []))
-        filas = notas + (['', '--- AVISOS ---'] if avisos else []) + avisos
-        pd.DataFrame({'Explicación de columnas y avisos': filas or ['(sin notas)']}).to_excel(
-            w, sheet_name='NOTAS', index=False)
+        for name, df in sheets.items():
+            df.to_excel(w, sheet_name=str(name)[:31], index=False)
     buf.seek(0)
     return buf
 
@@ -6159,8 +6186,6 @@ def tab_remuneraciones_mes():
     archivo de horas por subvención (columna Mes). A diferencia del Lote Anual
     (que calcula BRP y exige el web sostenedor), aquí NO se necesita web.
     """
-    from processors.remuneraciones_mes import procesar
-
     with st.expander("📖 ¿Cómo usar Remuneraciones x Mes?", expanded=False):
         show_tutorial([
             ("Sube las planillas", "Un archivo por mes y tipo: '1 SEP.xlsx', '1 SNPIE.xlsx', … (cada uno con su Hoja1 de sueldos)."),
@@ -6218,80 +6243,73 @@ def tab_remuneraciones_mes():
 
     if st.button("▶️  PROCESAR REMUNERACIONES", type="primary", key="rem_procesar", width='stretch'):
         file_por_nombre = {f.name: f for f in planillas}
-        sep_files, snpie_files = {}, {}
-        tmp_paths = []
-        try:
-            # Guardar solo las planillas confirmadas (con tipo y mes) a temporales.
+        horas = _rem_read_any(horas_file)
+        mes_col = pd.to_numeric(horas.get('Mes'), errors='coerce')
+        sheets, avisos = {}, []
+        with st.spinner("Procesando remuneraciones..."):
             for _, r in edited.iterrows():
                 tipo = {'SEP': 'sep', 'SN+PIE': 'pie'}.get(r['Tipo'])
                 mes = MES_A_NUM.get(r['Mes'])
                 if not tipo or not mes:
                     continue
+                nombre_mes = MESES_NUM_TO_NAME[f'{mes:02d}']
+                # Horas del mes (preserva el orden original de columnas, que el
+                # PIEProcessor necesita para su usecols).
+                horas_mes = horas[mes_col == mes]
+                if horas_mes.empty:
+                    avisos.append(f"'{r['Archivo']}': no hay horas para {nombre_mes} → se omite.")
+                    continue
                 f = file_por_nombre.get(r['Archivo'])
                 if not f:
                     continue
-                tmp = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
-                tmp.write(f.getvalue())
-                tmp.close()
-                p = Path(tmp.name)
-                tmp_paths.append(p)
-                (sep_files if tipo == 'sep' else snpie_files)[mes] = p
+                try:
+                    df = _rem_procesar_planilla(f, horas_mes, tipo)
+                except Exception as e:
+                    avisos.append(f"'{r['Archivo']}': error al procesar ({type(e).__name__}: {e}).")
+                    continue
+                tlabel = 'SEP' if tipo == 'sep' else 'SNPIE'
+                sheets[f"{tlabel} {nombre_mes}"[:31]] = df
 
-            # Archivo de horas a temporal.
-            hext = Path(horas_file.name).suffix or '.xlsx'
-            htmp = tempfile.NamedTemporaryFile(suffix=hext, delete=False)
-            htmp.write(horas_file.getvalue())
-            htmp.close()
-            horas_path = Path(htmp.name)
-            tmp_paths.append(horas_path)
-
-            if not sep_files and not snpie_files:
-                st.error("No hay planillas confirmadas con tipo y mes. Revisa la grilla.")
-                return
-
-            with st.spinner("Procesando remuneraciones..."):
-                res = procesar(sep_files, snpie_files, horas_path)
-            st.session_state['rem_result'] = res
-        finally:
-            _cleanup_temp_files(*tmp_paths)
+        if not sheets:
+            st.error("No se procesó ninguna planilla. Revisa la grilla y el archivo de horas.")
+        else:
+            st.session_state['rem_result'] = {'sheets': sheets, 'avisos': avisos}
 
     # --- Resultados (desde session_state, sobreviven a reruns) ---
     if 'rem_result' in st.session_state:
         res = st.session_state['rem_result']
+        sheets = res.get('sheets', {})
 
-        avisos = res.get('_avisos', [])
+        avisos = res.get('avisos', [])
         if avisos:
             st.warning("⚠️ **Avisos:**")
             for a in avisos:
                 st.markdown(f"- {a}")
 
-        notas = res.get('_notas_columnas', [])
-        if notas:
-            with st.expander(f"📋 Notas de columnas ({len(notas)}) — qué se quitó o ajustó y por qué", expanded=True):
-                for n in notas:
-                    st.markdown(f"- {n}")
-
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Filas SEP", len(res.get('SEP', [])))
-        c2.metric("Filas PIE", len(res.get('PIE', [])))
-        c3.metric("Filas SN", len(res.get('SN', [])))
-        c4.metric("Filas HORAS", len(res.get('HORAS', [])))
-
-        st.markdown("##### Vista previa (HORAS)")
-        horas_df = res.get('HORAS')
-        if horas_df is not None and not horas_df.empty:
-            st.dataframe(horas_df.head(15), width='stretch', hide_index=True)
-
-        _, col_dl, _ = st.columns([1, 2, 1])
-        with col_dl:
-            st.download_button(
-                "📥  DESCARGAR RESULTADO (Excel)",
-                data=_rem_excel_bytes(res),
-                file_name="Remuneraciones_por_Mes.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                width='stretch',
-                key="rem_download",
+        if sheets:
+            st.success(
+                f"✅ Se procesaron **{len(sheets)}** planilla(s). Formato de siempre: "
+                f"planilla completa + columnas prorrateadas (SEP, o PIE/SN) + HORAS_VALIDAS."
             )
+            resumen = pd.DataFrame(
+                [{'Planilla': k, 'Filas': len(v), 'Columnas': len(v.columns)}
+                 for k, v in sheets.items()])
+            st.dataframe(resumen, width='stretch', hide_index=True)
+
+            primera = next(iter(sheets))
+            st.markdown(f"##### Vista previa — {primera}")
+            st.dataframe(sheets[primera].head(10), width='stretch', hide_index=True)
+
+            _, col_dl, _ = st.columns([1, 2, 1])
+            with col_dl:
+                st.download_button(
+                    "📥  DESCARGAR (Excel: una hoja por planilla)",
+                    data=_rem_excel_bytes(sheets),
+                    file_name="Remuneraciones_por_Mes.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    width='stretch',
+                    key="rem_download",
+                )
 
 
 # ============================================================================
