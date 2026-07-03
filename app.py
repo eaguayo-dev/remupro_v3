@@ -6132,6 +6132,169 @@ def tab_comparar_meses():
 
 
 # ============================================================================
+# REMUNERACIONES x MES (prorrateo de sueldos SEP/PIE/SN, SIN BRP)
+# ============================================================================
+
+def _rem_excel_bytes(res: dict) -> BytesIO:
+    """Arma el Excel de salida con hojas HORAS/SEP/PIE/SN + NOTAS."""
+    buf = BytesIO()
+    with pd.ExcelWriter(buf, engine='openpyxl') as w:
+        for k in ['HORAS', 'SEP', 'PIE', 'SN']:
+            df = res.get(k)
+            if df is not None and not df.empty:
+                df.to_excel(w, sheet_name=k, index=False)
+        notas = list(res.get('_notas_columnas', []))
+        avisos = list(res.get('_avisos', []))
+        filas = notas + (['', '--- AVISOS ---'] if avisos else []) + avisos
+        pd.DataFrame({'Explicación de columnas y avisos': filas or ['(sin notas)']}).to_excel(
+            w, sheet_name='NOTAS', index=False)
+    buf.seek(0)
+    return buf
+
+
+def tab_remuneraciones_mes():
+    """Pestaña 'Remuneraciones x Mes': prorratea sueldos por SEP/PIE/SN, SIN BRP.
+
+    Cruza planillas de sueldo (una Hoja1 por mes, tipo SEP o SN+PIE) con un único
+    archivo de horas por subvención (columna Mes). A diferencia del Lote Anual
+    (que calcula BRP y exige el web sostenedor), aquí NO se necesita web.
+    """
+    from processors.remuneraciones_mes import procesar
+
+    with st.expander("📖 ¿Cómo usar Remuneraciones x Mes?", expanded=False):
+        show_tutorial([
+            ("Sube las planillas", "Un archivo por mes y tipo: '1 SEP.xlsx', '1 SNPIE.xlsx', … (cada uno con su Hoja1 de sueldos)."),
+            ("Sube el archivo de horas", "UN solo archivo con columnas Mes, Rut, SEP, PIE, SN, TOTAL HORAS."),
+            ("Confirma y procesa", "Revisa el mes/tipo detectado, corrige si hace falta, y procesa. No requiere web ni BRP."),
+        ])
+
+    st.markdown("---")
+    st.markdown("##### 📁 Planillas de sueldo (SEP y SN+PIE, una por mes)")
+    planillas = st.file_uploader(
+        "Planillas SEP / SNPIE (Excel con Hoja1)", type=['xlsx', 'xls'],
+        accept_multiple_files=True, key="rem_planillas")
+
+    st.markdown("##### ⏱ Archivo ÚNICO de horas por subvención")
+    horas_file = st.file_uploader(
+        "Horas (columnas: Mes, Rut, SEP, PIE, SN, TOTAL HORAS)",
+        type=['xlsx', 'xls', 'csv'], key="rem_horas")
+
+    if not planillas or not horas_file:
+        st.info("Sube las planillas de sueldo y el archivo único de horas para comenzar.")
+        return
+
+    # --- Grilla editable de confirmación (Tipo + Mes por planilla) ---
+    TIPO_LABELS = {'sep': 'SEP', 'pie': 'SN+PIE'}
+    IGNORAR, SIN_MES = '(ignorar)', '(sin mes)'
+    MES_LABELS = [MESES_NUM_TO_NAME[f'{i:02d}'] for i in range(1, 13)]
+    MES_A_NUM = {MESES_NUM_TO_NAME[f'{i:02d}']: i for i in range(1, 13)}
+
+    filas = []
+    for f in planillas:
+        t = detect_file_type(f.name)
+        m = detect_month_from_filename(f.name)
+        filas.append({
+            'Revisar': '⚠️' if (t not in ('sep', 'pie') or not m) else '✓',
+            'Archivo': f.name,
+            'Tipo': TIPO_LABELS.get(t, IGNORAR),
+            'Mes': MESES_NUM_TO_NAME.get(m, SIN_MES) if m else SIN_MES,
+        })
+    df_grid = pd.DataFrame(filas)
+
+    st.markdown("##### ✅ Confirma la detección")
+    st.caption("Corrige el **Tipo** (SEP o SN+PIE) o el **Mes** si algo quedó mal. "
+               "Los ⚠️ necesitan tu atención. Usa '(ignorar)' para excluir un archivo.")
+    edited = st.data_editor(
+        df_grid, width='stretch', hide_index=True, key='rem_grid',
+        column_config={
+            'Revisar': st.column_config.TextColumn('', disabled=True, width='small'),
+            'Archivo': st.column_config.TextColumn('Archivo', disabled=True),
+            'Tipo': st.column_config.SelectboxColumn(
+                'Tipo', options=list(TIPO_LABELS.values()) + [IGNORAR], required=True),
+            'Mes': st.column_config.SelectboxColumn(
+                'Mes', options=[SIN_MES] + MES_LABELS, required=True),
+        },
+    )
+
+    if st.button("▶️  PROCESAR REMUNERACIONES", type="primary", key="rem_procesar", width='stretch'):
+        file_por_nombre = {f.name: f for f in planillas}
+        sep_files, snpie_files = {}, {}
+        tmp_paths = []
+        try:
+            # Guardar solo las planillas confirmadas (con tipo y mes) a temporales.
+            for _, r in edited.iterrows():
+                tipo = {'SEP': 'sep', 'SN+PIE': 'pie'}.get(r['Tipo'])
+                mes = MES_A_NUM.get(r['Mes'])
+                if not tipo or not mes:
+                    continue
+                f = file_por_nombre.get(r['Archivo'])
+                if not f:
+                    continue
+                tmp = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
+                tmp.write(f.getvalue())
+                tmp.close()
+                p = Path(tmp.name)
+                tmp_paths.append(p)
+                (sep_files if tipo == 'sep' else snpie_files)[mes] = p
+
+            # Archivo de horas a temporal.
+            hext = Path(horas_file.name).suffix or '.xlsx'
+            htmp = tempfile.NamedTemporaryFile(suffix=hext, delete=False)
+            htmp.write(horas_file.getvalue())
+            htmp.close()
+            horas_path = Path(htmp.name)
+            tmp_paths.append(horas_path)
+
+            if not sep_files and not snpie_files:
+                st.error("No hay planillas confirmadas con tipo y mes. Revisa la grilla.")
+                return
+
+            with st.spinner("Procesando remuneraciones..."):
+                res = procesar(sep_files, snpie_files, horas_path)
+            st.session_state['rem_result'] = res
+        finally:
+            _cleanup_temp_files(*tmp_paths)
+
+    # --- Resultados (desde session_state, sobreviven a reruns) ---
+    if 'rem_result' in st.session_state:
+        res = st.session_state['rem_result']
+
+        avisos = res.get('_avisos', [])
+        if avisos:
+            st.warning("⚠️ **Avisos:**")
+            for a in avisos:
+                st.markdown(f"- {a}")
+
+        notas = res.get('_notas_columnas', [])
+        if notas:
+            with st.expander(f"📋 Notas de columnas ({len(notas)}) — qué se quitó o ajustó y por qué", expanded=True):
+                for n in notas:
+                    st.markdown(f"- {n}")
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Filas SEP", len(res.get('SEP', [])))
+        c2.metric("Filas PIE", len(res.get('PIE', [])))
+        c3.metric("Filas SN", len(res.get('SN', [])))
+        c4.metric("Filas HORAS", len(res.get('HORAS', [])))
+
+        st.markdown("##### Vista previa (HORAS)")
+        horas_df = res.get('HORAS')
+        if horas_df is not None and not horas_df.empty:
+            st.dataframe(horas_df.head(15), width='stretch', hide_index=True)
+
+        _, col_dl, _ = st.columns([1, 2, 1])
+        with col_dl:
+            st.download_button(
+                "📥  DESCARGAR RESULTADO (Excel)",
+                data=_rem_excel_bytes(res),
+                file_name="Remuneraciones_por_Mes.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                width='stretch',
+                key="rem_download",
+            )
+
+
+# ============================================================================
 # MAIN
 # ============================================================================
 
@@ -6189,8 +6352,8 @@ def main():
 
     # Pestañas dinámicas: las 5 base siempre; BRP/Duplicados según preferencias.
     # tab_names y tab_funcs se mantienen en paralelo (mismo índice = misma pestaña).
-    tab_names = ["⚡ Todo en Uno", "📊 SEP / PIE / EIB", "📅 Lote Anual", "📉 Comparar Meses", "⏱ Horas x Contrato"]
-    tab_funcs = [tab_todo_en_uno, tab_sep_pie, tab_lote_anual, tab_comparar_meses, tab_horas_contrato]
+    tab_names = ["⚡ Todo en Uno", "📊 SEP / PIE / EIB", "📅 Lote Anual", "📉 Comparar Meses", "⏱ Horas x Contrato", "🧾 Remuneraciones x Mes"]
+    tab_funcs = [tab_todo_en_uno, tab_sep_pie, tab_lote_anual, tab_comparar_meses, tab_horas_contrato, tab_remuneraciones_mes]
 
     if st.session_state.get("pref_brp"):
         tab_names.append("💰 Distribución BRP")
