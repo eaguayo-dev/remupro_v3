@@ -25,11 +25,22 @@ Cómo agregar una actualización (lo único que necesitas recordar cada mes):
 from typing import List, Dict
 
 # Versión visible de la app. Súbela cuando publiques cambios relevantes.
-APP_VERSION: str = "2.6.0"
+APP_VERSION: str = "2.7.0"
 
 # Historial de actualizaciones, de la MÁS NUEVA (arriba) a la más antigua.
 # La primera entrada de la lista es la que dispara el aviso "Sistema actualizado".
 UPDATES: List[Dict] = [
+    {
+        "version": "2.7.0",
+        "date": "2026-10-13",
+        "summary": [
+            "Nueva pestaña 'Remuneraciones x Mes': prorratea sueldos por SEP/PIE/SN sin BRP ni web sostenedor.",
+            "Se entienden las planillas con haberes con código (H001 SUELDO BASE, etc.), con o sin código.",
+            "Nuevo aviso cuando la planilla de sueldos trae columnas que el sistema no conoce.",
+            "Cotización Expectativa de Vida y Rentabilidad Protegida ahora son columnas especiales.",
+            "Opción para conservar los códigos H en el resultado (SEP/PIE/EIB y Remuneraciones x Mes).",
+        ],
+    },
     {
         "version": "2.6.0",
         "date": "2026-07-02",

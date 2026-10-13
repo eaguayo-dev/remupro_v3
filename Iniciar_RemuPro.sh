@@ -1,9 +1,9 @@
 #!/bin/bash
-# RemuPro v2.4 - Launcher para Mac/Linux
+# RemuPro - Launcher para Mac/Linux
 
 echo ""
 echo "  ╔═══════════════════════════════════════════════╗"
-echo "  ║         📊 RemuPro v2.4                       ║"
+echo "  ║         📊 RemuPro                            ║"
 echo "  ║   Remuneraciones Educativas                   ║"
 echo "  ╚═══════════════════════════════════════════════╝"
 echo ""

@@ -1,6 +1,5 @@
 # AI Assistants
 GEMINI.md
-CLAUDE.md
 
 # RemuPro - Base de datos local (datos sensibles)
 data/
@@ -116,6 +115,7 @@ celerybeat.pid
 .env
 .venv
 venv/
+.deps_installed
 ENV/
 env/
 env.bak/

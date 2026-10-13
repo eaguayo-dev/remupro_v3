@@ -1,137 +1,127 @@
 <div align="center">
-  <h1>RemuPro v3</h1>
-  <p><strong>Sistema de Procesamiento de Remuneraciones Educativas</strong></p>
-  <p>Distribucion automatizada de la BRP para el DAEM de Galvarino</p>
+  <h1>RemuPro</h1>
+  <p><strong>Procesamiento de remuneraciones educativas</strong></p>
+  <p>Prorrateo de sueldos por subvención (SEP / PIE / Normal / EIB) y distribución de la BRP para el DAEM de Galvarino</p>
 </div>
 
 <div align="center">
-  <img src="https://img.shields.io/badge/Python-3.13-blue.svg" alt="Python 3.13">
-  <img src="https://img.shields.io/badge/FastAPI-0.115-green.svg" alt="FastAPI">
-  <img src="https://img.shields.io/badge/Next.js-14-black.svg" alt="Next.js 14">
-  <img src="https://img.shields.io/badge/Electron-33-blue.svg" alt="Electron">
+  <img src="https://img.shields.io/badge/Python-3.11%2B-blue.svg" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/Streamlit-app%20local-red.svg" alt="Streamlit">
   <img src="https://img.shields.io/badge/Licencia-MIT-green.svg" alt="MIT">
 </div>
 
 ---
 
-## Que hace
+## Qué hace
 
-RemuPro automatiza la distribucion de la **Bonificacion de Reconocimiento Profesional (BRP)** entre subvenciones SEP, PIE y Normal. Toma 3 archivos de entrada (MINEDUC, SEP, NORMAL/PIE), los procesa y genera reportes detallados por docente y establecimiento.
+RemuPro es una **aplicación local** (Streamlit) que corre en el computador del usuario, en Windows o Mac. No hay servidor, base de datos externa ni cuenta: los archivos se procesan en la máquina y los resultados se descargan como Excel o Word.
 
-## Arquitectura
+Toma las planillas de sueldos y de horas del DAEM y:
 
-```
-remupro_v3/
-  app.py                    # UI Streamlit (legado)
-  processors/               # Logica de procesamiento
-    sep.py                  # Procesador SEP
-    pie.py                  # Procesador PIE/Normal
-    brp.py                  # Distribucion BRP
-    integrado.py            # Orquestador SEP+PIE+BRP
-    rem.py                  # Analisis horas REM
-  config/
-    columns.py              # Definiciones de columnas Excel
-    escuelas.json           # Mapa RBD -> nombre escuela
-  database/
-    models.py               # SQLAlchemy (ProcesamientoMensual, DocenteMensual, ColumnAlertPreference)
-    repository.py           # Queries: busqueda, tendencias, multi-establecimiento
-  reports/
-    audit_log.py            # Sistema de auditoria
-    word_report.py          # Generacion informes Word
-  api/                      # REST API (FastAPI)
-    main.py                 # App FastAPI + CORS + routers
-    routes/
-      upload.py             # Subida de archivos
-      process.py            # Procesamiento integrado
-      data.py               # Resultados + descargas individuales
-      dashboard.py          # Datos historicos, tendencias, busqueda
-      preferences.py        # Preferencias de alertas de columnas
-    ws.py                   # WebSocket para progreso en tiempo real
-  dashboard/                # Frontend (Next.js 14 + shadcn/ui + Recharts)
-    src/app/                # Paginas: /, /upload, /results, /multi-establecimiento, /auditoria, /alertas
-    src/components/         # Componentes: sidebar, download-selector, monthly-trends-chart, etc.
-    src/lib/                # API client, store, utilidades
-  electron/                 # Empaquetado desktop (Windows/macOS/Linux)
-    main.js                 # Proceso principal: lanza FastAPI + BrowserWindow
-  tests/                    # Tests pytest (28 tests)
-```
+- **Prorratea** cada monto de sueldo entre las subvenciones según las horas de cada docente.
+- **Distribuye la BRP** (Bonificación de Reconocimiento Profesional) con los datos del MINEDUC.
+- **Compara meses**, consolida el año completo y detecta duplicados y docentes en más de un establecimiento.
+- **Avisa** cuando una planilla trae columnas que el sistema no conoce, para que nada nuevo pase en silencio (ver [columnas y códigos H](docs/operaciones/columnas-y-codigos-h.md)).
 
-## Funcionalidades principales
+## Pestañas de la aplicación
 
-- **Distribucion BRP automatizada**: Calcula BRP proporcional por horas SEP/PIE/Normal para cada docente
-- **Multi-establecimiento**: Detecta docentes en 2+ establecimientos, distribuye por RBD
-- **Descargas individuales**: SEP procesado, NORMAL/PIE procesado, BRP distribuido, Excel combinado, Informe Word
-- **Dashboard historico**: Tendencias mensuales, busqueda de docentes, comparacion entre meses
-- **Alertas de columnas**: Configura columnas como Normal/Ignorar/Importante
-- **Analisis REM**: Clasificacion de contratos por tipo (SEP/PIE/EIB/NORMAL)
-- **Auditoria**: Log estructurado de cada operacion con niveles INFO/WARNING/ERROR
-- **Limite 44 horas**: Validacion automatica del maximo legal
+| Pestaña | Para qué sirve |
+|---|---|
+| ⚡ **Todo en Uno** | Flujo completo de un mes: SEP + PIE + web sostenedor (+ REM opcional) → BRP distribuido, Excel combinado e informe Word. |
+| 📊 **SEP / PIE / EIB** | Procesa un solo archivo (hojas `HORAS` y `TOTAL`) con el prorrateo de la subvención elegida. |
+| 📅 **Lote Anual** | Procesa los 12 meses de golpe, con grilla editable para confirmar mes y tipo de cada archivo. |
+| 📉 **Comparar Meses** | Compara dos o más meses ya procesados. |
+| ⏱ **Horas x Contrato** | Clasifica las horas de cada persona por tipo de contrato a partir de los archivos REM. |
+| 🧾 **Remuneraciones x Mes** | Prorratea sueldos por SEP/PIE/SN con un único archivo de horas, **sin BRP ni web sostenedor**. Reproduce el formato clásico `_procesado`. |
+| 💰 **Distribución BRP** y 🔄 **Duplicados** | Ocultas por defecto; se activan en la barra lateral → *Pestañas visibles*. |
 
-## Inicio rapido
+## Inicio rápido
 
-### Opcion 1: Streamlit (desarrollo)
+Requiere **Python 3.11 o superior**.
+
+**macOS / Linux**
 
 ```bash
 git clone https://github.com/eaguayo-dev/remupro_v3.git
 cd remupro_v3
+./Iniciar_RemuPro.sh
+```
+
+El script crea el entorno virtual, instala las dependencias la primera vez y abre la app en http://localhost:8501.
+
+**Windows**
+
+```bat
+git clone https://github.com/eaguayo-dev/remupro_v3.git
+cd remupro_v3
+Iniciar_RemuPro.bat
+```
+
+**A mano** (cualquier sistema)
+
+```bash
 python3 -m venv .venv
-source .venv/bin/activate        # macOS/Linux
-# .venv\Scripts\activate         # Windows
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 streamlit run app.py
 ```
 
-### Opcion 2: API + Dashboard (produccion)
-
-```bash
-# Terminal 1: API
-.venv/bin/uvicorn api.main:app --port 8000
-
-# Terminal 2: Dashboard
-cd dashboard
-npm install
-npm run dev
-# Abrir http://localhost:3000
-```
-
-### Opcion 3: Electron (escritorio)
-
-```bash
-# Build completo
-./build.sh          # macOS/Linux
-build.bat           # Windows
-# Instalador generado en dist/
-```
+> Tras un `git pull` que toque `processors/` o `config/`, reinicia Streamlit: el auto-recargado no siempre refresca los módulos importados.
 
 ## Archivos de entrada
 
-| Archivo | Prefijo | Descripcion |
-|---------|---------|-------------|
-| CPEIP | `web*` | Asignaciones por sostenedor y establecimiento |
-| SEP | `sep*` | Liquidacion subvencion SEP |
-| NORMAL/PIE | `sn*` o `*pie*` | Liquidacion subvencion Normal y PIE |
-| REM (opcional) | `rem*` | Resumen de horas por contrato |
+Los archivos se reconocen por el **nombre**:
 
-## API endpoints
+| Archivo | Nombre empieza / contiene | Descripción |
+|---|---|---|
+| web sostenedor | `web*` | Asignaciones del MINEDUC por sostenedor y establecimiento (datos para la BRP). |
+| SEP | `sep*` | Planilla de sueldos de la subvención SEP. |
+| Normal / PIE | `sn*` o `*pie*` | Planilla de sueldos de la subvención Normal y PIE. |
+| EIB | `*eib*` | Planilla de Educación Intercultural Bilingüe. |
+| REM (opcional) | `rem*` | Resumen de horas por contrato. |
 
-| Endpoint | Descripcion |
-|----------|-------------|
-| `POST /api/upload` | Subir archivos Excel/CSV |
-| `POST /api/process/integrado` | Procesar SEP+PIE+BRP |
-| `GET /api/results/{sid}/download/{sep,pie,brp,combo,word}` | Descargas individuales |
-| `GET /api/dashboard/months` | Meses disponibles |
-| `GET /api/dashboard/trends` | Tendencias multi-mes |
-| `GET /api/dashboard/teachers/{mes}` | Busqueda paginada de docentes |
-| `GET /api/preferences/columns` | Preferencias de alertas |
-| `PUT /api/preferences/columns/{key}` | Actualizar preferencia |
+Cada planilla de sueldos lleva dos hojas: `HORAS` (`Rut`, `Nombre` y las horas por subvención) y `TOTAL` (los montos por RUT). El mes se toma del nombre del archivo (`sep_enero_2026.xlsx`) o de una columna `Mes`.
 
-## Tests
+Las planillas pueden traer los haberes con o sin código `H###` (`H001 SUELDO BASE` o `SUELDO BASE`); ambos formatos se entienden.
 
-```bash
-.venv/bin/python -m pytest tests/ -v
+## Estructura del repositorio
+
+```
+app.py                    # Interfaz Streamlit (todas las pestañas)
+config/
+  columns.py              # Nombres de columnas, códigos H###, control de columnas nuevas
+  escuelas.py / .json     # Mapa RBD → establecimiento
+  version.py              # Versión y aviso "Sistema actualizado"
+processors/               # El motor de cálculo
+  base.py                 # Clase base: carga, prorrateo, alertas
+  sep.py  pie.py  eib.py  # Prorrateo por subvención
+  brp.py                  # Distribución BRP con datos MINEDUC
+  integrado.py            # Orquesta SEP + PIE + BRP
+  anual.py  anual_batch.py        # Lote Anual
+  remuneraciones_mes.py   # Remuneraciones x Mes (sin BRP)
+  rem.py  duplicados.py   # Horas por contrato, duplicados
+database/                 # Historial local en SQLite (data/remupro.db)
+reports/                  # Informe Word y registro de auditoría
+tests/                    # Tests con pytest
+docs/                     # Documentación (ver abajo)
 ```
 
-28 tests cubriendo endpoints de dashboard, preferencias y descargas.
+## Documentación
+
+- [`docs/engineering/guia-desarrollo.md`](docs/engineering/guia-desarrollo.md): qué hace cada parte y por qué.
+- [`docs/operaciones/columnas-y-codigos-h.md`](docs/operaciones/columnas-y-codigos-h.md): qué hacer cuando una planilla trae columnas nuevas.
+- [`CHANGELOG.md`](CHANGELOG.md): historial de cambios.
+- [`CLAUDE.md`](CLAUDE.md): reglas de trabajo para desarrollar con Claude Code.
+
+## Pruebas
+
+```bash
+pytest tests/ -q
+```
+
+## Datos y privacidad
+
+El historial se guarda en `data/remupro.db` (SQLite local), que está en el `.gitignore` porque contiene datos de remuneraciones. **Nunca subas ese archivo ni las planillas al repositorio.**
 
 ## Licencia
 

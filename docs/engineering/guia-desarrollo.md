@@ -4,6 +4,8 @@ Esta guía explica **qué hace cada parte del sistema y por qué**, para que
 cualquiera del equipo (o Claude) pueda entenderlo rápido sin tener que leer todo
 el código. Si vas a tocar el proyecto después de un tiempo, empieza por aquí.
 
+> Para columnas nuevas y códigos `H###` ver [`docs/operaciones/columnas-y-codigos-h.md`](../operaciones/columnas-y-codigos-h.md).
+
 > RemuPro procesa **remuneraciones de docentes** de un sostenedor educacional
 > chileno (DAEM). Toma planillas de horas y montos, las **prorratea por tipo de
 > subvención** (SEP / PIE / Normal / EIB) y genera un Excel consolidado, además
@@ -25,6 +27,7 @@ processors/            # El "motor". Cada archivo procesa un tipo de dato.
   brp.py               # Cálculo BRP con datos MINEDUC (web sostenedor).
   integrado.py         # Junta SEP+PIE+BRP en un solo flujo.
   anual_batch.py       # Lote Anual: procesa 12 meses de golpe.
+  remuneraciones_mes.py # Pestaña "Remuneraciones x Mes" (prorrateo sin BRP).
   rem.py / duplicados.py     # Utilidades (archivo REM, detección de duplicados).
 database/              # Persistencia (SQLAlchemy) y comparación entre meses.
   models.py            # Tablas (procesamientos, detalles por docente/mes).
@@ -34,6 +37,7 @@ reports/
   audit_log.py         # Registro estructurado de eventos (avisos/errores).
   word_report.py       # Informe en Word.
 tests/                 # Tests con pytest.
+docs/                  # Documentación (esta guía + docs/operaciones/).
 ```
 
 **Regla mental:** `app.py` = interfaz, `processors/` = cálculo, `config/` =

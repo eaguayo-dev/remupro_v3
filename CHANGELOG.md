@@ -11,6 +11,20 @@ actualizado" que aparece en la app.
 
 ---
 
+## [2.7.0] — 2026-10-13
+
+### Agregado
+- **Pestaña «Remuneraciones x Mes».** Prorratea sueldos por SEP/PIE/SN con un único archivo de horas, sin BRP ni web sostenedor. Reproduce el formato clásico `_procesado`. (`processors/remuneraciones_mes.py`, `app.py`)
+- **Haberes con código `H###`.** Las planillas con títulos como `H001 SUELDO BASE` se reconocen igual que las de siempre; el código se quita al leer. (`config/columns.py`)
+- **Aviso de columnas nuevas.** Una columna fuera de las listas conocidas genera una alerta en pantalla en vez de omitirse. (`processors/base.py`, `app.py`)
+- **Check «Conservar códigos H###»** en SEP/PIE/EIB y Remuneraciones x Mes.
+- `Cotización Expectativa de Vi` y `Rentabilidad Protegida` pasan a columnas especiales; `Aporte adicional empleador` es alias de `Aporte Adicional AFP`.
+
+### Documentación
+- README reescrito (app local para Windows y Mac), `CLAUDE.md` versionado y nueva carpeta `docs/`.
+
+---
+
 ## [2.6.0] — 2026-07-02
 
 ### Agregado
