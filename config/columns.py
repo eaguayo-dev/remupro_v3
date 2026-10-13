@@ -61,9 +61,16 @@ SPECIAL_SALARY_COLUMNS: List[str] = [
     'Antic SEG.INV.SOB.',
     'SEG.CESANTIA EMP.',
     'MUTUAL',
-    'Aporte adicional empleador',
-    'Aporte Adicional AFP'
+    'Aporte Adicional AFP',
+    'Cotización Expectativa de Vi',
+    'Rentabilidad Protegida',
 ]
+
+# Nombres antiguos que son el MISMO concepto con otro título. Se renombran al
+# nombre vigente al leer la planilla (solo si el vigente no viene ya).
+COLUMN_ALIASES: Dict[str, str] = {
+    'Aporte adicional empleador': 'Aporte Adicional AFP',
+}
 
 # Columnas de salarios y beneficios para prorrateo.
 # A diferencia de SPECIAL_SALARY_COLUMNS, estas son OPCIONALES: pueden o no
@@ -90,7 +97,7 @@ SALARY_BENEFIT_COLUMNS: List[str] = [
     'Planilla Suplementaria', 'ART.5°TRANS. LEY20.903',
     # Haberes nuevos que llegaron con código H### (ver normalize_haber_codes)
     'BONO ESCOLAR', 'ASIGNACION ENCARGADO DE C', 'BONO SALA CUNA',
-    'BONO ART 13 LEY 21806', 'Cotización Expectativa de Vi', 'Rentabilidad Protegida',
+    'BONO ART 13 LEY 21806',
 
     # Totales y descuentos
     'TOTAL HABERES', 'IMPOSICIONES antic', 'SALUD',
@@ -291,21 +298,27 @@ def normalize_haber_codes(df: pd.DataFrame) -> pd.DataFrame:
     """
     known = SPECIAL_SALARY_COLUMNS + SALARY_BENEFIT_COLUMNS
     cols = list(df.columns)
-    if not any(_HABER_CODE_RE.match(str(c).strip()) for c in cols):
-        return df
+    present = {str(c).strip() for c in cols}
 
-    rename = {}
+    rename, codigos = {}, {}
     for c in cols:
-        m = _HABER_CODE_RE.match(str(c).strip())
-        if not m:
-            continue
-        name = m.group(1).strip()
-        if name not in known:
-            # Título truncado: se busca el nombre conocido que empieza igual.
-            cands = [k for k in known if len(name) >= 8 and k.startswith(name)]
-            if len(set(cands)) == 1:
-                name = cands[0]
-        rename[c] = name
+        key = str(c).strip()
+        m = _HABER_CODE_RE.match(key)
+        if m:
+            code, name = key.split()[0], m.group(1).strip()
+            if name not in known:
+                # Título truncado: se busca el nombre conocido que empieza igual.
+                cands = [k for k in known if len(name) >= 8 and k.startswith(name)]
+                if len(set(cands)) == 1:
+                    name = cands[0]
+            name = COLUMN_ALIASES.get(name, name)
+            rename[c] = name
+            codigos[name] = code
+        elif key in COLUMN_ALIASES and COLUMN_ALIASES[key] not in present:
+            rename[c] = COLUMN_ALIASES[key]
+
+    if not rename:
+        return df
 
     # Si el nombre limpio ya lo usa otra columna (el descuento), esa pasa a '.1'.
     taken = {str(c).strip() for c in cols if c not in rename}
@@ -313,8 +326,10 @@ def normalize_haber_codes(df: pd.DataFrame) -> pd.DataFrame:
         if name in taken:
             old = next(x for x in cols if x not in rename and str(x).strip() == name)
             rename[old] = f'{name}.1'
-    return df.rename(columns=rename)
-
+    out = df.rename(columns=rename)
+    # Se guarda qué código tenía cada haber, por si el usuario pide conservarlo.
+    out.attrs['codigos_h'] = codigos
+    return out
 
 
 def _col_key(name) -> str:

@@ -22,7 +22,7 @@ import sys
 import time
 import logging
 from pathlib import Path
-from typing import Callable, Optional, Tuple, List
+from typing import Callable, Dict, Optional, Tuple, List
 from abc import ABC, abstractmethod
 
 import pandas as pd
@@ -71,6 +71,11 @@ class BaseProcessor(ABC):
         # Alertas de columnas generadas durante el procesamiento (para la UI).
         # Se acumulan aquí y la UI las consulta con get_column_alerts().
         self.column_alerts: List[dict] = []
+        # Opción de salida: si True, el resultado lleva los códigos H### de los
+        # haberes (ej. 'H001 SUELDO BASE_SEP'). Por defecto False (nombres
+        # limpios de siempre). Solo se activa donde el Excel es el resultado final.
+        self.conservar_codigos_h: bool = False
+        self.codigos_h: Dict[str, str] = {}
 
     # ==================== VALIDACIÓN ====================
     
@@ -152,6 +157,7 @@ class BaseProcessor(ABC):
         código H### que no está en config/columns.py) NO se prorratea, y sin este
         aviso pasaría desapercibida. Una sola alerta lista todas las nuevas.
         """
+        self.codigos_h = dict(df.attrs.get('codigos_h', {}))
         nuevas = find_unclassified_columns(df)
         if not nuevas:
             return
@@ -278,6 +284,8 @@ class BaseProcessor(ABC):
         Mismo motivo que en la lectura: si el archivo de salida está abierto en
         Excel, el guardado falla; se reintenta esperando a que el usuario lo cierre.
         """
+        if self.conservar_codigos_h and self.codigos_h:
+            data = self._reponer_codigos_h(data)
         for attempt in range(max_retries):
             try:
                 data.to_excel(str(output_path), index=False, engine='openpyxl')
@@ -289,6 +297,22 @@ class BaseProcessor(ABC):
                 self.logger.warning(f"Reintento {attempt + 1} para guardar")
                 time.sleep(1)
     
+    _SUFIJOS_SALIDA = ('', '_SEP', '_EIB', '_PIE', '_SN', '_nuevo', ' PIE', ' SN')
+
+    def _reponer_codigos_h(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Antepone el código H### a las columnas de haberes del resultado.
+
+        Cubre la columna original y sus derivadas ('X_SEP', 'X PIE', 'X SN',
+        'X_nuevo', ...). Los códigos vienen de la planilla leída.
+        """
+        rename = {}
+        for col in data.columns:
+            for nombre, code in self.codigos_h.items():
+                if str(col).startswith(nombre) and str(col)[len(nombre):] in self._SUFIJOS_SALIDA:
+                    rename[col] = f'{code} {col}'
+                    break
+        return data.rename(columns=rename)
+
     def _raise_permission_error(self, path: Path, operation: str) -> None:
         """Lanza error de permisos con mensaje apropiado según el SO."""
         if sys.platform == 'win32':

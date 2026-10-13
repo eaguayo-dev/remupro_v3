@@ -2594,6 +2594,12 @@ def tab_sep_pie():
 
         st.markdown("")
 
+        conservar_h = st.checkbox(
+            "Conservar códigos H### en los nombres de columna del resultado",
+            value=False, key="sep_conservar_h",
+            help="Solo aplica si la planilla trae haberes con código (H001 SUELDO BASE...). "
+                 "Desmarcado: el resultado usa los nombres de siempre (SUELDO BASE_SEP).")
+
         if st.button("▶️  PROCESAR ARCHIVO", key="btn_sep", width='stretch'):
             if modo == "EIB":
                 processor = EIBProcessor()
@@ -2601,6 +2607,7 @@ def tab_sep_pie():
                 processor = SEPProcessor()
             else:
                 processor = PIEProcessor()
+            processor.conservar_codigos_h = conservar_h
             df, error = process_files(processor, [archivo])
 
             if error:
@@ -6151,7 +6158,7 @@ def _rem_read_any(file_obj, sheet=0):
     return pd.read_excel(BytesIO(file_obj.getvalue()), sheet_name=sheet, engine='openpyxl')
 
 
-def _rem_procesar_planilla(file_obj, horas_mes, tipo):
+def _rem_procesar_planilla(file_obj, horas_mes, tipo, conservar_h=False):
     """Ensambla HORAS+TOTAL y corre el procesador SEP o PIE EXISTENTE.
 
     Reproduce EXACTO el formato de siempre ('_procesado'): la planilla completa
@@ -6172,6 +6179,7 @@ def _rem_procesar_planilla(file_obj, horas_mes, tipo):
             horas_mes.to_excel(w, sheet_name='HORAS', index=False)
             total.to_excel(w, sheet_name='TOTAL', index=False)
         proc = SEPProcessor() if tipo == 'sep' else PIEProcessor()
+        proc.conservar_codigos_h = conservar_h
         proc.process_file(Path(asm.name), Path(out.name), lambda v, m: None)
         return pd.read_excel(out.name, engine='openpyxl')
     finally:
@@ -6250,6 +6258,11 @@ def tab_remuneraciones_mes():
         },
     )
 
+    conservar_h = st.checkbox(
+        "Conservar códigos H### en los nombres de columna del resultado",
+        value=False, key="rem_conservar_h",
+        help="Solo aplica si la planilla trae haberes con código (H001 SUELDO BASE...).")
+
     if st.button("▶️  PROCESAR REMUNERACIONES", type="primary", key="rem_procesar", width='stretch'):
         file_por_nombre = {f.name: f for f in planillas}
         horas = _rem_read_any(horas_file)
@@ -6272,7 +6285,7 @@ def tab_remuneraciones_mes():
                 if not f:
                     continue
                 try:
-                    df = _rem_procesar_planilla(f, horas_mes, tipo)
+                    df = _rem_procesar_planilla(f, horas_mes, tipo, conservar_h)
                 except Exception as e:
                     avisos.append(f"'{r['Archivo']}': error al procesar ({type(e).__name__}: {e}).")
                     continue

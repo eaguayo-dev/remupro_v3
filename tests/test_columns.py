@@ -266,3 +266,44 @@ class TestColumnasNuevas:
         p._record_unclassified_columns(pd.DataFrame([[0, 0]], columns=['Rut', 'COLUMNA RARA']))
         alertas = [a for a in p.get_column_alerts() if a['tipo'] == 'columna_salario_nueva']
         assert len(alertas) == 1 and alertas[0]['columnas_lista'] == ['COLUMNA RARA']
+
+
+# ── alias y códigos H en el resultado ──────────────────────────────
+def _libro_h(tmp_path):
+    horas = pd.DataFrame({'Rut': ['1-9'], 'Nombre': ['A'], 'SEP': [22], 'PIE': [0], 'SN': [22]})
+    total = pd.DataFrame({'Rut': ['1-9'], 'H001 SUELDO BASE': [1000], 'H774 Aporte Adicional AFP': [100],
+                          'Aporte adicional empleador': [0], 'Aporte Adicional AFP': [5]})
+    ruta = tmp_path / 'in.xlsx'
+    with pd.ExcelWriter(ruta) as w:
+        horas.to_excel(w, sheet_name='HORAS', index=False)
+        total.to_excel(w, sheet_name='TOTAL', index=False)
+    return ruta
+
+
+class TestCodigosHSalida:
+    def test_alias_aporte_adicional_empleador(self):
+        from config.columns import normalize_haber_codes
+        df = normalize_haber_codes(pd.DataFrame([[0]], columns=['Aporte adicional empleador']))
+        assert list(df.columns) == ['Aporte Adicional AFP']
+
+    def test_alias_no_pisa_si_el_vigente_ya_viene(self):
+        from config.columns import normalize_haber_codes
+        df = normalize_haber_codes(pd.DataFrame([[0, 0]], columns=['Aporte adicional empleador', 'Aporte Adicional AFP']))
+        assert list(df.columns) == ['Aporte adicional empleador', 'Aporte Adicional AFP']
+
+    def test_sep_sin_conservar_usa_nombres_limpios(self, tmp_path):
+        from pathlib import Path
+        from processors.sep import SEPProcessor
+        out = tmp_path / 'out.xlsx'
+        SEPProcessor().process_file(_libro_h(tmp_path), out, lambda v, m: None)
+        cols = list(pd.read_excel(out).columns)
+        assert 'SUELDO BASE_SEP' in cols and not any(str(c).startswith('H0') for c in cols)
+
+    def test_sep_conservando_agrega_codigo(self, tmp_path):
+        from processors.sep import SEPProcessor
+        p = SEPProcessor(); p.conservar_codigos_h = True
+        out = tmp_path / 'out.xlsx'
+        p.process_file(_libro_h(tmp_path), out, lambda v, m: None)
+        cols = list(pd.read_excel(out).columns)
+        assert 'H001 SUELDO BASE_SEP' in cols and 'H001 SUELDO BASE' in cols
+        assert 'H774 Aporte Adicional AFP_SEP' in cols
