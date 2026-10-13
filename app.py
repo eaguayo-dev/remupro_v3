@@ -13,7 +13,7 @@ from datetime import datetime
 
 from processors import (
     SEPProcessor, PIEProcessor, DuplicadosProcessor,
-    BRPProcessor, IntegradoProcessor, REMProcessor,
+    BRPProcessor, IntegradoProcessor,
     EIBProcessor, AnualBatchProcessor,
 )
 from reports import AuditLog, InformeWord
@@ -987,9 +987,12 @@ st.markdown("""
     }
 
     /* Streamlit dibuja una línea de color primario bajo la pestaña activa; con la
-       pestaña ya rellena de azul se veía como un subrayado rojo. Se oculta. */
+       pestaña ya rellena de azul se veía como un subrayado rojo. Se oculta.
+       Las versiones nuevas de Streamlit usan react-aria (SelectionIndicator);
+       las antiguas, baseweb (tab-highlight/tab-border). Se cubren ambas. */
     .stTabs [data-baseweb="tab-highlight"],
-    .stTabs [data-baseweb="tab-border"] {
+    .stTabs [data-baseweb="tab-border"],
+    .stTabs .react-aria-SelectionIndicator {
         display: none !important;
     }
     
@@ -1741,74 +1744,6 @@ def show_charts_by_school(df_rbd):
         st.plotly_chart(fig2, width='stretch')
 
 
-def show_rem_results(df_resumen, alertas):
-    """Muestra resultados del procesamiento REM (horas disponibles)."""
-    st.markdown("##### 📋 Análisis de Horas (REM)")
-
-    # Métricas generales
-    total_personas = len(df_resumen)
-    exceden = df_resumen['EXCEDE'].sum() if 'EXCEDE' in df_resumen.columns else 0
-    total_horas = df_resumen['TOTAL'].sum() if 'TOTAL' in df_resumen.columns else 0
-    disponibles = df_resumen['DISPONIBLE'].sum() if 'DISPONIBLE' in df_resumen.columns else 0
-
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.metric("Personas", f"{total_personas}")
-    with c2:
-        st.metric("Total Horas", f"{int(total_horas)}")
-    with c3:
-        st.metric("Horas Disponibles", f"{int(disponibles)}")
-    with c4:
-        st.metric("Exceden 44 hrs", f"{int(exceden)}")
-        if exceden > 0:
-            st.badge(f"{exceden} alerta(s)", color="red")
-
-    # Alertas de exceso
-    if alertas:
-        st.markdown("---")
-        st.markdown(f"##### ⚠️ {len(alertas)} persona(s) exceden 44 horas")
-        for a in alertas:
-            warning_box(
-                f"<b>{a.get('nombre', a['rut'])}</b> — {a['detalle']}<br>"
-                f"Exceso: <b>{a['exceso']} hrs</b>"
-            )
-
-    # Tabla resumen con RUT formateado
-    st.markdown("---")
-    st.markdown("##### 📊 Detalle por persona")
-
-    df_display = df_resumen.copy()
-    if 'RUT_NORM' in df_display.columns:
-        df_display['RUT'] = df_display['RUT_NORM'].apply(format_rut)
-        cols = ['RUT'] + [c for c in df_display.columns if c not in ('RUT', 'RUT_NORM')]
-        df_display = df_display[cols]
-        df_display = df_display.drop(columns=['RUT_NORM'], errors='ignore')
-
-    # Resaltar filas que exceden
-    st.dataframe(df_display, width='stretch', hide_index=True)
-
-    # Resumen por tipo
-    if total_horas > 0:
-        import plotly.express as px
-        horas_sep = df_resumen['SEP'].sum() if 'SEP' in df_resumen.columns else 0
-        horas_pie = df_resumen['PIE'].sum() if 'PIE' in df_resumen.columns else 0
-        horas_normal = df_resumen['NORMAL'].sum() if 'NORMAL' in df_resumen.columns else 0
-        horas_eib = df_resumen['EIB'].sum() if 'EIB' in df_resumen.columns else 0
-
-        tipos = ['SEP', 'PIE', 'Normal', 'EIB']
-        vals = [horas_sep, horas_pie, horas_normal, horas_eib]
-        # Filtrar los que tienen valor
-        data = [(t, v) for t, v in zip(tipos, vals) if v > 0]
-        if data:
-            df_h = pd.DataFrame(data, columns=['Tipo', 'Horas'])
-            fig = px.pie(df_h, values='Horas', names='Tipo',
-                         title='Distribución de Horas por Tipo',
-                         color_discrete_sequence=['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6'])
-            fig.update_traces(textposition='inside', textinfo='percent+label')
-            fig.update_layout(height=300, showlegend=False, separators=',.')
-            st.plotly_chart(fig, width='stretch')
-
-
 def show_multi_establishment(excel_source):
     """Muestra sección de docentes multi-establecimiento.
 
@@ -2267,19 +2202,6 @@ def show_sidebar_charts():
     st.caption(f"SEP: {fmt_clp(brp_sep)}")
     st.caption(f"PIE: {fmt_clp(brp_pie)}")
     st.caption(f"Normal: {fmt_clp(brp_normal)}")
-
-    # Info REM si existe
-    if 'last_rem_result' in st.session_state:
-        rem = st.session_state['last_rem_result']
-        st.markdown("---")
-        st.markdown("**📋 REM**")
-        st.caption(f"Personas: {rem.get('personas', 0)}")
-        st.caption(f"Horas totales: {rem.get('total_horas', 0)}")
-        exceden = rem.get('exceden', 0)
-        if exceden > 0:
-            st.badge(f"{exceden} exceden 44hrs", color="red")
-        else:
-            st.badge("Todos dentro del límite", color="green")
 
 
 def card_start(title: str, icon: str = ""):
@@ -3198,8 +3120,7 @@ def tab_todo_en_uno():
     """Pestaña principal: procesamiento integrado de un mes ("Todo en Uno").
 
     Es el flujo completo para un período. El usuario arrastra los 3 archivos
-    BRUTOS (SEP, PIE y web_sostenedor) — que se autodetectan por nombre — más
-    un archivo REM opcional para calcular horas disponibles por persona.
+    BRUTOS (SEP, PIE y web_sostenedor), que se autodetectan por nombre.
     Con el mes indicado (YYYY-MM), IntegradoProcessor procesa SEP+PIE, reparte
     BRP con el web sostenedor y consolida todo. El resultado incluye el Excel
     procesado y un Informe Word con la auditoría; opcionalmente compara contra
@@ -3222,7 +3143,7 @@ def tab_todo_en_uno():
     repo = BRPRepository()
 
     if 'todouno_files' not in st.session_state:
-        st.session_state.todouno_files = {'sep': None, 'pie': None, 'web': None, 'rem': None}
+        st.session_state.todouno_files = {'sep': None, 'pie': None, 'web': None}
 
     # Uploader múltiple
     st.markdown("##### 📥 Cargar Archivos BRUTOS")
@@ -3240,28 +3161,14 @@ def tab_todo_en_uno():
         name_lower = f.name.lower()
         if name_lower.startswith('web'):
             st.session_state.todouno_files['web'] = f
-        elif name_lower.startswith('rem') or 'rem' in name_lower:
-            st.session_state.todouno_files['rem'] = f
         elif name_lower.startswith('sep') or 'sep' in name_lower:
             st.session_state.todouno_files['sep'] = f
         elif name_lower.startswith('sn') or 'pie' in name_lower or 'normal' in name_lower:
             st.session_state.todouno_files['pie'] = f
 
-    # Upload separado para REM (CSV o Excel)
-    st.markdown("")
-    st.markdown("##### 📋 Archivo REM (opcional)")
-    st.caption("Archivo de remuneraciones para calcular horas disponibles por persona")
-    rem_upload = st.file_uploader(
-        "Archivo REM (CSV o Excel)",
-        type=['csv', 'xlsx', 'xls'],
-        key="rem_file_upload"
-    )
-    if rem_upload:
-        st.session_state.todouno_files['rem'] = rem_upload
-
     # Mostrar estado de archivos detectados
     st.markdown("##### 📋 Archivos detectados")
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         st.markdown("**📄 SEP (bruto)**")
@@ -3287,17 +3194,9 @@ def tab_todo_en_uno():
         else:
             st.warning("Falta")
 
-    with col4:
-        st.markdown("**📋 REM (opcional)**")
-        f_rem = st.session_state.todouno_files.get('rem')
-        if f_rem:
-            st.success(f"✓ {f_rem.name}")
-        else:
-            st.info("Sin REM")
-
     # Botón para limpiar
     if st.button("🔄 Limpiar archivos", key="btn_clear_todouno"):
-        st.session_state.todouno_files = {'sep': None, 'pie': None, 'web': None, 'rem': None}
+        st.session_state.todouno_files = {'sep': None, 'pie': None, 'web': None}
         st.rerun()
 
     # Verificar que están todos los archivos
@@ -3509,31 +3408,6 @@ def tab_todo_en_uno():
                 'brp_normal': brp_normal, 'brp_total': brp_total,
             }
 
-            # Procesar REM si se proporcionó
-            f_rem = st.session_state.todouno_files.get('rem')
-            if f_rem:
-                try:
-                    suffix = '.csv' if f_rem.name.lower().endswith('.csv') else '.xlsx'
-                    tmp_rem = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
-                    tmp_rem.write(f_rem.getvalue())
-                    rem_path = Path(tmp_rem.name)
-                    tmp_rem.close()
-
-                    rem_processor = REMProcessor()
-                    df_rem_resumen, df_rem_detalle, rem_alertas = rem_processor.process(rem_path)
-
-                    st.session_state['todouno_rem'] = {
-                        'df_resumen': df_rem_resumen,
-                        'alertas': rem_alertas,
-                    }
-                    st.session_state['last_rem_result'] = {
-                        'personas': len(df_rem_resumen),
-                        'total_horas': int(df_rem_resumen['TOTAL'].sum()),
-                        'exceden': int(df_rem_resumen['EXCEDE'].sum()),
-                    }
-                except Exception as e:
-                    st.warning(f"Error procesando REM: {format_user_error(e)}")
-
         except Exception as e:
             st.error(f"❌ **Error:** {format_user_error(e)}")
             import traceback
@@ -3654,12 +3528,6 @@ def tab_todo_en_uno():
             show_multi_establishment(excel_bytes)
 
             show_audit_log_detailed(audit)
-
-            # REM results
-            if 'todouno_rem' in st.session_state:
-                st.markdown("---")
-                rem_data = st.session_state['todouno_rem']
-                show_rem_results(rem_data['df_resumen'], rem_data['alertas'])
 
         with res_tabs[1]:
             if brp_total > 0:

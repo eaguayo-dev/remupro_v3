@@ -27,7 +27,7 @@ Toma las planillas de sueldos y de horas del DAEM y:
 
 | Pestaña | Para qué sirve |
 |---|---|
-| **Todo en Uno** | Flujo completo de un mes: SEP + PIE + web sostenedor (+ REM opcional) → BRP distribuido, Excel combinado e informe Word. |
+| **Todo en Uno** | Flujo completo de un mes: SEP + PIE + web sostenedor → BRP distribuido, Excel combinado e informe Word. |
 | **SEP / PIE / EIB** | Procesa un solo archivo (hojas `HORAS` y `TOTAL`) con el prorrateo de la subvención elegida. |
 | **Lote Anual** | Procesa los 12 meses de golpe, con grilla editable para confirmar mes y tipo de cada archivo. |
 | **Comparar Meses** | Compara dos o más meses ya procesados. |
@@ -78,7 +78,7 @@ Los archivos se reconocen por el **nombre**:
 | SEP | `sep*` | Planilla de sueldos de la subvención SEP. |
 | Normal / PIE | `sn*` o `*pie*` | Planilla de sueldos de la subvención Normal y PIE. |
 | EIB | `*eib*` | Planilla de Educación Intercultural Bilingüe. |
-| REM (opcional) | `rem*` | Resumen de horas por contrato. |
+| REM | `REM 01 2026.xlsx` | Resumen de horas por contrato. Solo lo usa la pestaña Horas x Contrato. |
 
 Cada planilla de sueldos lleva dos hojas: `HORAS` (`Rut`, `Nombre` y las horas por subvención) y `TOTAL` (los montos por RUT). El mes se toma del nombre del archivo (`sep_enero_2026.xlsx`) o de una columna `Mes`.
 
