@@ -245,3 +245,24 @@ class TestNormalizeHaberCodes:
         from config.columns import normalize_haber_codes
         cols = ['SUELDO BASE', 'MUTUAL', 'TOTAL HABERES']
         assert list(normalize_haber_codes(self._df(cols)).columns) == cols
+
+
+# ── control de columnas nuevas ─────────────────────────────────────
+class TestColumnasNuevas:
+    def test_columnas_conocidas_no_alertan(self):
+        from config.columns import find_unclassified_columns
+        df = pd.DataFrame([[0] * 5], columns=['Rut', 'SUELDO BASE', 'Ubicación', 'MUTUAL.1', 'LIQUIDO'])
+        assert find_unclassified_columns(df) == []
+
+    def test_columna_nueva_se_detecta_tras_normalizar_codigo(self):
+        from config.columns import find_unclassified_columns, normalize_haber_codes
+        df = normalize_haber_codes(pd.DataFrame([[0, 0, 0]], columns=['Rut', 'H001 SUELDO BASE', 'H999 BONO NUEVO']))
+        assert find_unclassified_columns(df) == ['BONO NUEVO']
+
+    def test_procesador_registra_alerta(self):
+        from processors.sep import SEPProcessor
+        p = SEPProcessor()
+        p._record_unclassified_columns(pd.DataFrame([[0, 0]], columns=['Rut', 'COLUMNA RARA']))
+        p._record_unclassified_columns(pd.DataFrame([[0, 0]], columns=['Rut', 'COLUMNA RARA']))
+        alertas = [a for a in p.get_column_alerts() if a['tipo'] == 'columna_salario_nueva']
+        assert len(alertas) == 1 and alertas[0]['columnas_lista'] == ['COLUMNA RARA']

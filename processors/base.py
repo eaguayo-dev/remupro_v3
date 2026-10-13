@@ -34,6 +34,7 @@ from config.columns import (
     SPECIAL_SALARY_COLUMNS,
     get_available_columns,
     clean_columns,
+    find_unclassified_columns,
 )
 
 
@@ -144,6 +145,30 @@ class BaseProcessor(ABC):
             })
             self.logger.warning(f"Columna especial no encontrada: {col}")
 
+    def _record_unclassified_columns(self, df: pd.DataFrame) -> None:
+        """Alerta por columnas de la planilla de sueldos que el sistema no conoce.
+
+        Control contra cambios de formato: una columna nueva (ej. un haber con
+        código H### que no está en config/columns.py) NO se prorratea, y sin este
+        aviso pasaría desapercibida. Una sola alerta lista todas las nuevas.
+        """
+        nuevas = find_unclassified_columns(df)
+        if not nuevas:
+            return
+        if any(a.get('tipo') == 'columna_salario_nueva' for a in self.column_alerts):
+            return
+        self.column_alerts.append({
+            'nivel': 'warning',
+            'tipo': 'columna_salario_nueva',
+            'columna_nombre': ', '.join(nuevas),
+            'columnas_lista': nuevas,
+            'mensaje': (
+                f"La planilla trae {len(nuevas)} columna(s) que el sistema no conoce y "
+                f"NO se prorratean: {', '.join(nuevas)}."
+            ),
+        })
+        self.logger.warning(f"Columnas de sueldo no clasificadas: {nuevas}")
+
     # ==================== CARGA DE DATOS ====================
     
     def load_excel_with_retry(
@@ -175,7 +200,12 @@ class BaseProcessor(ABC):
                     **read_kwargs
                 )
                 # clean_columns normaliza los encabezados (espacios, etc.).
-                return clean_columns(df)
+                df = clean_columns(df)
+                # La hoja TOTAL es la planilla de sueldos: aquí se controla que
+                # no aparezcan columnas nuevas sin clasificar.
+                if sheet_name == 'TOTAL':
+                    self._record_unclassified_columns(df)
+                return df
             except PermissionError:
                 # En el último intento fallido se lanza un error explicativo.
                 if attempt == max_retries - 1:

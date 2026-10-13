@@ -1559,7 +1559,16 @@ def show_column_alerts(column_alerts):
     criticas = [a for a in column_alerts if a['nivel'] == 'error']
     nuevas = [a for a in column_alerts if a['tipo'] == 'columna_nueva']
     salario_faltante = [a for a in column_alerts if a['tipo'] == 'columna_salario_faltante']
+    salario_nuevo = [a for a in column_alerts if a['tipo'] == 'columna_salario_nueva']
 
+    if salario_nuevo:
+        for a in salario_nuevo:
+            lista = a.get('columnas_lista', [])
+            warning_box(f"<b>Columnas nuevas en la planilla de sueldos ({len(lista)}):</b> "
+                        f"{', '.join(lista)}<br>"
+                        f"El sistema no las conoce, por lo que <b>NO se prorratean</b> en el resultado. "
+                        f"Si son montos, hay que registrarlas en <code>config/columns.py</code> "
+                        f"(<code>SALARY_BENEFIT_COLUMNS</code>) antes de usar el resultado.")
     if criticas:
         for a in criticas:
             warning_box(f"<b>Columna no encontrada:</b> {a['columna_nombre']}<br>"

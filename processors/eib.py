@@ -45,6 +45,7 @@ class EIBProcessor(BaseProcessor):
             progress_callback(5, "Cargando datos...")
             self.validate_file(input_path)
             df = self._load_eib_sheet(input_path)
+            self._record_unclassified_columns(df)
 
             progress_callback(20, "Normalizando datos...")
 

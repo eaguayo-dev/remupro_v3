@@ -110,6 +110,48 @@ SALARY_BENEFIT_COLUMNS: List[str] = [
     'COLEGIO PROFESORES 1% HABER', 'Ajuste IMPOSICIONES'
 ]
 
+# Columnas que el sistema CONOCE y a propósito NO prorratea (identificación,
+# datos personales, horas extra, contrato, etc.). Existen para el control de
+# columnas nuevas: toda columna de la planilla de sueldos que no esté en
+# SPECIAL_SALARY_COLUMNS, SALARY_BENEFIT_COLUMNS ni aquí genera una ALERTA
+# ('columna_salario_nueva'), para que nada nuevo pase en silencio.
+# Para "aprobar" una columna nueva: si es un monto a prorratear → agregarla a
+# SALARY_BENEFIT_COLUMNS (o SPECIAL); si no se prorratea → agregarla aquí.
+# La comparación ignora mayúsculas, tildes y sufijos '.1'/'.2' de repetidos.
+KNOWN_NON_PRORATED_COLUMNS: List[str] = [
+    # Identificación y datos personales
+    'nombre', 'Nombre', 'Rut', 'rut', 'sexo', 'FECHA_NACIMIENTO', 'EstadoCivil',
+    'Nacionalidad', 'Apellido_Paterno', 'Apellido_Materno', 'Nombre_Funcionario',
+    'Direccion_Particular', 'Dirección', 'comuna', 'Jubilado', 'profesion',
+    # Contrato, cargo y ubicación
+    'fechaing', 'fechafin', 'planta', 'grado/nivel', 'Asimilacion_Grado',
+    'Ubicación', 'Cargo_Especifico', 'Tipo_de_Contrato', 'Categoria',
+    'Categoria_INE', 'Centro_Costo', 'Sub_Programa', 'Cod_Habilitado',
+    'Nombre_Habilitado', 'Departamento', 'Sección', 'Oficina', 'Tipo_Pago',
+    'Boletas', 'Ano_Remun', 'Mes_Remun', 'Dias_Trab', 'TramoLey20903',
+    'Tramo_Asignacion_Familiar', 'nrocargasfam', 'bienios',
+    'Fecha_Antiguedad_Bienios', 'Puntaje_Capacitacion', 'Puntaje_Antiguedad',
+    'Perfeccionamiento',
+    # Previsión y salud (datos, no montos)
+    'previsionant', 'prevision', 'nombreafp', 'cotizamasde30anos',
+    'cotizadesahucio', 'salud', 'pactadosalud',
+    # Jornada y horas
+    'Jornada', 'Jornada_Basica_Normal', 'Jornada_Media_Normal',
+    'Jornada_Basica_Suplente', 'Jornada_Media_Suplente',
+    'T12 Horas ext 25', 'T13 Horas ext 50', 'T14 Horas ext 100',
+    'T15 Horas Turnos 25', 'T16 Horas Festivas 50', 'T17 Horas Eventos 50',
+    'T20 Horas Recargo 25', 'T21 HRS DIURNAS 25', 'horextNoc50', 'horturno',
+    'HORAS_EXT_(25%)_1', 'HORAS_EXT_(225%)', 'horatraso',
+    'Imputacion Horas 25%', 'Imputacion Horas 50%',
+    # Documentos y observaciones
+    'Número_Documento', 'Fecha_Documento', 'Observación',
+    'Observación_Adicional', 'aclaración_causa_fin',
+    # MONTOS conocidos que NO se prorratean (totales/derivados). Revisar si
+    # alguno debiera prorratearse.
+    'Liquido', 'Renta_Afecta', 'Promedio_Renta', 'Tributable',
+    'Apv_rebaja_Tributaria', 'DIF.HAB.RETROACTIVOS', 'CUOTA FONASA',
+]
+
 # Columnas del archivo web_sostenedor (MINEDUC).
 # Mapea una CLAVE INTERNA corta (usada en el código) al NOMBRE EXACTO de la
 # columna tal como viene en el Excel descargado del portal del sostenedor.
@@ -273,6 +315,37 @@ def normalize_haber_codes(df: pd.DataFrame) -> pd.DataFrame:
             rename[old] = f'{name}.1'
     return df.rename(columns=rename)
 
+
+
+def _col_key(name) -> str:
+    """Clave de comparación de títulos de columna.
+
+    Ignora mayúsculas y el sufijo '.N' de repetidos. Las letras con tilde/ñ se
+    descartan junto con los '?': algunas exportaciones pierden los acentos y los
+    dejan como '?' ('Ubicaci?n'), y así ambas formas dan la misma clave.
+    """
+    import unicodedata
+    txt = unicodedata.normalize('NFKD', re.sub(r'\.\d+$', '', str(name).strip()))
+    out = []
+    for i, ch in enumerate(txt):
+        if ch == '?' or unicodedata.combining(ch):
+            continue
+        if i + 1 < len(txt) and unicodedata.combining(txt[i + 1]):
+            continue
+        out.append(ch)
+    return ''.join(out).casefold()
+
+
+def find_unclassified_columns(df: pd.DataFrame) -> List[str]:
+    """Columnas de la planilla de sueldos que el sistema no conoce.
+
+    'Conocida' = está en SPECIAL_SALARY_COLUMNS, SALARY_BENEFIT_COLUMNS o
+    KNOWN_NON_PRORATED_COLUMNS. Se llama con las columnas YA normalizadas
+    (sin código H###). Una columna fuera de esas listas no se prorratea.
+    """
+    conocidas = {_col_key(c) for c in
+                 SPECIAL_SALARY_COLUMNS + SALARY_BENEFIT_COLUMNS + KNOWN_NON_PRORATED_COLUMNS}
+    return [str(c) for c in df.columns if _col_key(c) not in conocidas]
 
 
 def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
