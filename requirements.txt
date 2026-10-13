@@ -3,7 +3,7 @@ pandas>=2.0.0
 numpy>=1.24.0
 openpyxl>=3.1.0
 python-calamine>=0.6.0  # Fallback para Excel con estilos corruptos
-streamlit>=1.28.0
+streamlit>=1.36.0  # st.navigation (menú lateral por secciones)
 plotly>=5.18.0
 
 # Nuevas dependencias para "Todo en Uno"

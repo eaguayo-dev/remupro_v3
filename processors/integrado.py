@@ -86,7 +86,7 @@ class IntegradoProcessor(BaseProcessor):
             progress_callback(5, "Archivos validados correctamente")
 
             # 2. Procesar SEP bruto (5-30%). El lambda mapea el progreso interno del
-            #    sub-procesador (0-100) al tramo 5-30 de la barra global.
+            # sub-procesador (0-100) al tramo 5-30 de la barra global.
             progress_callback(5, "Procesando archivo SEP...")
             sep_procesado_path = self._process_sep(
                 sep_bruto_path,
@@ -111,7 +111,7 @@ class IntegradoProcessor(BaseProcessor):
             )
 
             # 4. Distribuir BRP (55-90%): cruza web + SEP + PIE procesados y reparte el
-            #    bono por subvención. Aquí se produce el DataFrame de resultado.
+            # bono por subvención. Aquí se produce el DataFrame de resultado.
             progress_callback(55, "Distribuyendo BRP...")
             df_result = self._process_brp(
                 web_sostenedor_path,

@@ -696,7 +696,7 @@ class AnualBatchProcessor:
                     all_eib.append(eib_df)
 
                 # 4. Distribuir BRP cruzando web + SEP + PIE del mes. month_filter deja
-                #    que el BRP tome solo las filas del mes correcto del web sostenedor.
+                # que el BRP tome solo las filas del mes correcto del web sostenedor.
                 brp_out = self._make_temp()
                 tmp_files.append(brp_out)
                 brp_proc = BRPProcessor()

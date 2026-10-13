@@ -92,14 +92,14 @@ class BRPProcessor(BaseProcessor):
             df_pie = self._load_processed_file(pie_procesado_path, 'PIE')
             
             # 2. Construir mapa de horas por docente (SEP / PIE / SN / TOTAL).
-            #    Es el denominador y las proporciones para repartir los montos.
+            # Es el denominador y las proporciones para repartir los montos.
             progress_callback(35, "Analizando horas por tipo de subvención...")
             horas_por_docente = self._build_hours_map(df_sep, df_pie)
             self._horas_map = horas_por_docente  # Guardar para acceso posterior
 
             # 3. Identificar casos para revisión manual.
-            #    ruts_web: docentes presentes en el archivo MINEDUC.
-            #    ruts_procesados: docentes con horas en SEP/PIE.
+            # ruts_web: docentes presentes en el archivo MINEDUC.
+            # ruts_procesados: docentes con horas en SEP/PIE.
             progress_callback(40, "Identificando casos para revisión...")
             ruts_web = set(df_web['RUT_NORM'].unique())
             ruts_procesados = set(horas_por_docente.keys())
@@ -171,7 +171,7 @@ class BRPProcessor(BaseProcessor):
                 df_revision = df_revision[cols_exist + [c for c in df_revision.columns if c not in cols_exist]]
                 
                 df_revision.to_excel(writer, sheet_name='REVISAR', index=False)
-                self.logger.info(f"📋 Hoja REVISAR: {len(df_revision)} casos")
+                self.logger.info(f"Hoja REVISAR: {len(df_revision)} casos")
             
             # Hoja 4: Resumen General
             df_general = self._create_general_summary(df_result)
@@ -181,12 +181,12 @@ class BRPProcessor(BaseProcessor):
             df_multi = self._create_multi_establishment_sheet(df_result)
             if df_multi is not None and not df_multi.empty:
                 df_multi.to_excel(writer, sheet_name='MULTI_ESTABLECIMIENTO', index=False)
-                self.logger.info(f"📋 Hoja MULTI_ESTABLECIMIENTO: {df_multi['RUT'].nunique()} docentes")
+                self.logger.info(f"Hoja MULTI_ESTABLECIMIENTO: {df_multi['RUT'].nunique()} docentes")
 
             # Hojas por establecimiento (nombre parseado)
             self._add_per_school_sheets(df_export, writer)
 
-        self.logger.info(f"✅ Archivo guardado: {output_path.name}")
+        self.logger.info(f"Archivo guardado: {output_path.name}")
 
     def _add_per_school_sheets(self, df_export: pd.DataFrame, writer) -> None:
         """Agrega una hoja por cada establecimiento con nombre parseado."""
@@ -823,7 +823,7 @@ class BRPProcessor(BaseProcessor):
                 })
         
         # 2. Docentes sin liquidación: están en MINEDUC pero no en SEP/PIE
-        #    (diferencia de conjuntos de RUTs).
+        # (diferencia de conjuntos de RUTs).
         sin_match = ruts_web - ruts_procesados
         for rut in sin_match:
             doc = df_web[df_web['RUT_NORM'] == rut]
@@ -864,11 +864,11 @@ class BRPProcessor(BaseProcessor):
         reemplazos = len([r for r in revisar if 'reemplazo' in r.get('TIPO_PAGO', '').lower()])
         
         if exceden > 0:
-            self.logger.warning(f"⚠️ {exceden} docentes exceden 44 horas")
+            self.logger.warning(f"{exceden} docentes exceden 44 horas")
         if reemplazos > 0:
-            self.logger.info(f"ℹ️ {reemplazos} de ellos son tipo 'Reemplazo'")
+            self.logger.info(f"{reemplazos} de ellos son tipo 'Reemplazo'")
         if sin_liq > 0:
-            self.logger.warning(f"⚠️ {sin_liq} docentes sin liquidación SEP/PIE")
+            self.logger.warning(f"{sin_liq} docentes sin liquidación SEP/PIE")
         
         return revisar
     

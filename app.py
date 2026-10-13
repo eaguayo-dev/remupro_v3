@@ -869,7 +869,7 @@ def render_generic_interactive_table(df, money_cols=None, label_cols=None, key="
 
 st.set_page_config(
     page_title="RemuPro",
-    page_icon="📊",
+    page_icon=":material/bar_chart:",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -1182,7 +1182,11 @@ st.markdown("""
     /* ===== OCULTAR ELEMENTOS DE STREAMLIT ===== */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
+    /* Se oculta solo la barra de herramientas de Streamlit (Deploy, menú). No se usa
+       'header {visibility:hidden}': esconde también los títulos de sección del menú
+       lateral y el botón para reabrir la barra lateral, que ahora es la navegación. */
+    [data-testid="stHeader"] {background: transparent;}
+    [data-testid="stToolbar"], [data-testid="stDecoration"] {visibility: hidden;}
     
     /* ===== ANIMACIONES ===== */
     @keyframes fadeIn {
@@ -1206,7 +1210,7 @@ def show_header():
     st.markdown(f"""
     <div class="app-header">
         <div>
-            <h1 class="app-title">📊 RemuPro</h1>
+            <h1 class="app-title">RemuPro</h1>
             <p class="app-subtitle">Sistema de Procesamiento de Remuneraciones Educativas</p>
         </div>
         <div class="app-version">v{VERSION}</div>
@@ -1462,7 +1466,7 @@ def show_update_banner():
     with st.container(border=True):
         col_txt, col_btn = st.columns([6, 1], vertical_alignment="center")
         with col_txt:
-            st.markdown(f"🔔 **Sistema actualizado — v{version}** · {fecha}")
+            st.markdown(f"**Sistema actualizado — v{version}** · {fecha}")
             for s in upd.get("summary", []):
                 st.markdown(f"- {s}")
         with col_btn:
@@ -1527,7 +1531,7 @@ def barra_descarga(excel_bytes, file_name, key, extras=None):
     with st.container(key=f"rp_dlbar_{key}"):
         st.caption("Descarga tu resultado:")
         st.download_button(
-            "⬇️  Descargar Excel del resultado",
+            "  Descargar Excel del resultado",
             data=excel_bytes,
             file_name=file_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1623,7 +1627,7 @@ def show_desglose_daem_cpeip(df, prefix=''):
     cpeip_prior = sum(df[f'CPEIP_PRIOR_{s}'].sum() for s in ['SEP', 'PIE', 'NORMAL'] if f'CPEIP_PRIOR_{s}' in cols)
     cpeip_total = cpeip_recon + cpeip_tramo + cpeip_prior
 
-    st.markdown("##### 🏛️ Desglose por Pagador")
+    st.markdown("##### Desglose por Pagador")
     st.caption("DAEM = lo que paga el municipio (Subvención) | CPEIP = lo que transfiere el ministerio (Transferencia)")
 
     col_daem, col_cpeip = st.columns(2)
@@ -1763,7 +1767,7 @@ def show_multi_establishment(excel_source):
     n_docentes = len(total_docentes)
 
     st.markdown("---")
-    st.markdown("##### 🏫 Docentes Multi-Establecimiento")
+    st.markdown("##### Docentes Multi-Establecimiento")
     st.caption(f"{n_docentes} docente(s) trabajan en 2 o más escuelas")
 
     if n_docentes == 0:
@@ -1784,17 +1788,17 @@ def show_multi_establishment(excel_source):
         )
 
     # Tabs: Resumen general + cada docente
-    tab_labels = ["📋 Resumen"]
+    tab_labels = [":material/list_alt: Resumen"]
     for _, total_row in total_docentes.iterrows():
         nombre = total_row.get('NOMBRE', '')
         short = nombre.split()[0] if nombre and ' ' in str(nombre) else str(nombre)[:15]
-        tab_labels.append(f"👤 {short}")
+        tab_labels.append(f":material/person: {short}")
 
     multi_tabs = st.tabs(tab_labels)
 
     # Tab 0: Resumen general con buscador
     with multi_tabs[0]:
-        buscar_multi = st.text_input("🔎 Buscar docente", key="multi_buscar")
+        buscar_multi = st.text_input("Buscar docente", key="multi_buscar")
         df_totals_display = total_docentes.copy()
         cols_total = ['RUT', 'NOMBRE', 'HORAS_CONTRATO', 'RECONOCIMIENTO_MINEDUC',
                       'TRAMO_MINEDUC', 'PRIORITARIOS_MINEDUC', 'BRP_TOTAL']
@@ -1856,7 +1860,7 @@ def _find_col(df, *targets):
 def show_data_explorer(df, key_prefix="expl"):
     """Explorador interactivo unificado con filtros, DAEM/CPEIP y drill-down."""
     st.markdown("---")
-    st.markdown("##### 🔍 Explorador de Resultados")
+    st.markdown("##### Explorador de Resultados")
 
     df_ex = df.copy()
 
@@ -1905,7 +1909,7 @@ def show_data_explorer(df, key_prefix="expl"):
             else:
                 meses_disponibles = sorted(df_ex['MES'].unique().tolist())
             meses_sel = st.multiselect(
-                "📅 Mes", meses_disponibles, default=meses_disponibles,
+                " Mes", meses_disponibles, default=meses_disponibles,
                 key=f"{key_prefix}_mes"
             )
         idx += 1
@@ -1915,7 +1919,7 @@ def show_data_explorer(df, key_prefix="expl"):
         with filter_cols[idx]:
             tipos_pago = sorted(df_ex[col_tipo_pago].dropna().unique().tolist(), key=str)
             tipos_sel = st.multiselect(
-                "💼 Tipo de Pago", tipos_pago, default=tipos_pago,
+                " Tipo de Pago", tipos_pago, default=tipos_pago,
                 key=f"{key_prefix}_tipo"
             )
         idx += 1
@@ -1935,13 +1939,13 @@ def show_data_explorer(df, key_prefix="expl"):
                 return f"{r} — {name}" if name else str(r)
 
             rbd_sel = st.selectbox(
-                "🏫 Escuela", ['Todas'] + rbd_list,
+                " Escuela", ['Todas'] + rbd_list,
                 format_func=fmt_opt, key=f"{key_prefix}_rbd"
             )
         idx += 1
 
     with filter_cols[idx]:
-        buscar = st.text_input("🔎 Buscar", key=f"{key_prefix}_buscar")
+        buscar = st.text_input("Buscar", key=f"{key_prefix}_buscar")
 
     # --- Aplicar filtros ---
     mask = pd.Series([True] * len(df_ex), index=df_ex.index)
@@ -1991,7 +1995,7 @@ def show_data_explorer(df, key_prefix="expl"):
 
     # --- Desglose por tipo de pago con DAEM/CPEIP ---
     if col_tipo_pago and col_tipo_pago in df_f.columns:
-        st.markdown("**💼 Desglose por Tipo de Pago**")
+        st.markdown("**Desglose por Tipo de Pago**")
         agg_tipo = {}
         if col_rut:
             agg_tipo['REGISTROS'] = (col_rut, 'count')
@@ -2027,7 +2031,7 @@ def show_data_explorer(df, key_prefix="expl"):
 
     # --- Resumen por escuela con DAEM/CPEIP ---
     if col_rbd and rbd_sel == 'Todas':
-        st.markdown("**🏫 Resumen por Escuela**")
+        st.markdown("**Resumen por Escuela**")
         agg_esc = {}
         if col_rut:
             agg_esc['DOCENTES'] = (col_rut, 'nunique')
@@ -2066,7 +2070,7 @@ def show_data_explorer(df, key_prefix="expl"):
         add_table_downloads(df_esc, 'resumen_por_escuela', f'{key_prefix}_esc')
 
     # --- Tabla de docentes ---
-    st.markdown("**👥 Docentes**")
+    st.markdown("**Docentes**")
     show_cols = []
     if has_mes:
         show_cols.append('MES')
@@ -2107,7 +2111,7 @@ def show_data_explorer(df, key_prefix="expl"):
 
     if labels:
         sel_idx = st.selectbox(
-            "👤 Detalle Docente", range(len(labels)),
+            " Detalle Docente", range(len(labels)),
             format_func=lambda i: labels[i], key=f"{key_prefix}_doc"
         )
         teacher = df_f.iloc[sel_idx]
@@ -2161,7 +2165,7 @@ def show_sidebar_charts():
 
     import plotly.graph_objects as go
 
-    st.markdown(f"**📅 Mes: {mes}**")
+    st.markdown(f"**Mes: {mes}**")
     st.metric("BRP Total", fmt_clp(brp_total))
 
     # Mini gráfico de torta SEP/PIE/Normal
@@ -2356,7 +2360,7 @@ def add_table_downloads(df, label, key, include_pdf=True, excel_title='auto'):
     with cols[0]:
         excel_bytes = to_styled_excel(df, title=excel_title)
         st.download_button(
-            "📥 Excel", data=excel_bytes,
+            " Excel", data=excel_bytes,
             file_name=f"{label}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key=f"dl_{key}_xlsx",
@@ -2364,7 +2368,7 @@ def add_table_downloads(df, label, key, include_pdf=True, excel_title='auto'):
     with cols[1]:
         csv_bytes = df.to_csv(index=False).encode('utf-8-sig')
         st.download_button(
-            "📥 CSV", data=csv_bytes,
+            " CSV", data=csv_bytes,
             file_name=f"{label}.csv",
             mime="text/csv",
             key=f"dl_{key}_csv",
@@ -2374,7 +2378,7 @@ def add_table_downloads(df, label, key, include_pdf=True, excel_title='auto'):
             try:
                 pdf_bytes = generate_pdf_from_df(df, title=label.replace('_', ' ').title())
                 st.download_button(
-                    "📥 PDF", data=pdf_bytes,
+                    " PDF", data=pdf_bytes,
                     file_name=f"{label}.pdf",
                     mime="application/pdf",
                     key=f"dl_{key}_pdf",
@@ -2460,7 +2464,7 @@ def tab_sep_pie():
     descarga del resultado. Para el flujo combinado ver tab_todo_en_uno.
     """
 
-    with st.expander("📖 ¿Cómo usar esta herramienta?", expanded=False):
+    with st.expander("¿Cómo usar esta herramienta?", expanded=False):
         show_tutorial([
             ("Selecciona el tipo", "Elige SEP, PIE-NORMAL o EIB según el archivo a procesar."),
             ("Sube el archivo", "SEP/PIE: Excel con hojas HORAS y TOTAL. EIB: Excel con Hoja1 y columna Jornada."),
@@ -2474,7 +2478,7 @@ def tab_sep_pie():
     col1, col2 = st.columns([1, 2])
     with col1:
         modo = st.selectbox(
-            "📋 Tipo de procesamiento",
+            " Tipo de procesamiento",
             ["SEP", "PIE-NORMAL", "EIB"],
             help="SEP: Subvención Escolar Preferencial\nPIE-NORMAL: Programa de Integración + Subvención Normal\nEIB: Educación Intercultural Bilingüe"
         )
@@ -2482,7 +2486,7 @@ def tab_sep_pie():
     st.markdown("")
 
     # Archivo
-    st.markdown("##### 📁 Archivo de Entrada")
+    st.markdown("##### Archivo de Entrada")
     if modo == "EIB":
         st.caption("El archivo debe contener una hoja con datos y columna **Jornada**")
     else:
@@ -2499,27 +2503,27 @@ def tab_sep_pie():
         if modo == "EIB":
             # EIB: CSV o Excel con al menos 1 hoja
             if is_csv:
-                st.success(f"✅ **{archivo.name}** - Archivo CSV válido")
+                st.success(f"**{archivo.name}** - Archivo CSV válido")
             else:
                 try:
                     xlsx = pd.ExcelFile(archivo)
                     if not xlsx.sheet_names:
-                        st.error("❌ **Archivo incorrecto** - No contiene hojas")
+                        st.error("**Archivo incorrecto** - No contiene hojas")
                         return
-                    st.success(f"✅ **{archivo.name}** - Archivo válido (hoja: {xlsx.sheet_names[0]})")
+                    st.success(f"**{archivo.name}** - Archivo válido (hoja: {xlsx.sheet_names[0]})")
                 except Exception as e:
-                    st.error(f"❌ **Error al leer archivo:** {e}")
+                    st.error(f"**Error al leer archivo:** {e}")
                     return
         else:
             # SEP/PIE requieren hojas HORAS+TOTAL (no disponible en CSV)
             if is_csv:
-                st.error("❌ **SEP/PIE requieren un archivo Excel** con hojas HORAS y TOTAL. Los archivos CSV no tienen hojas.")
+                st.error("**SEP/PIE requieren un archivo Excel** con hojas HORAS y TOTAL. Los archivos CSV no tienen hojas.")
                 return
             ok, missing = check_sheets(archivo, ['HORAS', 'TOTAL'])
             if not ok:
-                st.error(f"❌ **Archivo incorrecto** - Faltan hojas: {', '.join(missing)}")
+                st.error(f"**Archivo incorrecto** - Faltan hojas: {', '.join(missing)}")
                 return
-            st.success(f"✅ **{archivo.name}** - Archivo válido")
+            st.success(f"**{archivo.name}** - Archivo válido")
 
         st.markdown("")
 
@@ -2529,7 +2533,7 @@ def tab_sep_pie():
             help="Solo aplica si la planilla trae haberes con código (H001 SUELDO BASE...). "
                  "Desmarcado: el resultado usa los nombres de siempre (SUELDO BASE_SEP).")
 
-        if st.button("▶️  PROCESAR ARCHIVO", key="btn_sep", width='stretch'):
+        if st.button("PROCESAR ARCHIVO", key="btn_sep", width='stretch'):
             if modo == "EIB":
                 processor = EIBProcessor()
             elif modo == "SEP":
@@ -2540,10 +2544,10 @@ def tab_sep_pie():
             df, error = process_files(processor, [archivo])
 
             if error:
-                st.error(f"❌ **Error:** {error}")
+                st.error(f"**Error:** {error}")
             else:
                 success_box(f"Se procesaron **{len(df)}** registros correctamente")
-                st.toast(f"{modo} procesado: {len(df)} registros", icon="✅")
+                st.toast(f"{modo} procesado: {len(df)} registros", icon=":material/check_circle:")
 
                 # Barra de descarga fija, ARRIBA del resultado (piloto UI/UX).
                 barra_descarga(
@@ -2567,7 +2571,7 @@ def tab_sep_pie():
                 _, col_dl, _ = st.columns([1, 2, 1])
                 with col_dl:
                     st.download_button(
-                        "📥  DESCARGAR RESULTADO",
+                        "  DESCARGAR RESULTADO",
                         data=to_excel_buffer(df),
                         file_name=nombre,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -2586,7 +2590,7 @@ def tab_brp():
     Pestaña opcional: se muestra solo si el usuario la activa en la sidebar.
     """
 
-    with st.expander("📖 ¿Cómo usar esta herramienta?", expanded=False):
+    with st.expander("¿Cómo usar esta herramienta?", expanded=False):
         show_tutorial([
             ("Procesa primero", "Ve a la pestaña SEP/PIE y procesa ambos archivos por separado."),
             ("Carga los archivos", "Arrastra los 3 archivos - se detectan automáticamente por nombre."),
@@ -2603,7 +2607,7 @@ def tab_brp():
         st.session_state.brp_files = {'web': None, 'sep': None, 'pie': None}
     
     # Uploader múltiple
-    st.markdown("##### 📥 Cargar Archivos (arrástralos todos juntos)")
+    st.markdown("##### Cargar Archivos (arrástralos todos juntos)")
     uploaded_files = st.file_uploader(
         "Arrastra los 3 archivos (Excel o CSV)",
         type=['xlsx', 'xls', 'csv'],
@@ -2622,35 +2626,35 @@ def tab_brp():
             st.session_state.brp_files['pie'] = f
     
     # Mostrar estado de archivos
-    st.markdown("##### 📋 Archivos detectados")
+    st.markdown("##### Archivos detectados")
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.markdown("**📋 MINEDUC (web_sostenedor)**")
+        st.markdown("**MINEDUC (web_sostenedor)**")
         f_web = st.session_state.brp_files['web']
         if f_web:
             st.success(f"✓ {f_web.name}")
         else:
-            st.warning("⬜ No detectado (nombre debe empezar con 'web')")
+            st.warning("No detectado (nombre debe empezar con 'web')")
     
     with col2:
-        st.markdown("**📊 SEP procesado**")
+        st.markdown("**SEP procesado**")
         f_sep = st.session_state.brp_files['sep']
         if f_sep:
             st.success(f"✓ {f_sep.name}")
         else:
-            st.warning("⬜ No detectado (nombre debe contener 'sep')")
+            st.warning("No detectado (nombre debe contener 'sep')")
     
     with col3:
-        st.markdown("**📊 PIE/Normal procesado**")
+        st.markdown("**PIE/Normal procesado**")
         f_pie = st.session_state.brp_files['pie']
         if f_pie:
             st.success(f"✓ {f_pie.name}")
         else:
-            st.warning("⬜ No detectado (nombre debe contener 'sn', 'pie' o 'normal')")
+            st.warning("No detectado (nombre debe contener 'sn', 'pie'o 'normal')")
     
     # Botón para limpiar
-    if st.button("🔄 Limpiar archivos", key="btn_clear_brp"):
+    if st.button("Limpiar archivos", key="btn_clear_brp"):
         st.session_state.brp_files = {'web': None, 'sep': None, 'pie': None}
         st.rerun()
     
@@ -2677,7 +2681,7 @@ def tab_brp():
 
     if web_months and len(web_months) > 1:
         st.markdown("---")
-        st.markdown("##### 📅 Seleccionar Mes del Web Sostenedor")
+        st.markdown("##### Seleccionar Mes del Web Sostenedor")
         st.info(f"El archivo web contiene **{len(web_months)} meses**. Selecciona cuál procesar.")
         # web_months es ['01', '02', ...] - mostrar nombres bonitos
         month_options = {MESES_NUM_TO_NAME.get(m, m): m for m in web_months}
@@ -2691,11 +2695,11 @@ def tab_brp():
 
     # Validación de archivos del mismo mes
     st.markdown("---")
-    st.markdown("##### ⚙️ Opciones")
+    st.markdown("##### Opciones")
 
     col_opt1, col_opt2 = st.columns(2)
     with col_opt1:
-        solo_validar = st.checkbox("🔍 Solo validar (sin procesar)", value=False,
+        solo_validar = st.checkbox("Solo validar (sin procesar)", value=False,
                                    help="Revisa los archivos sin generar el resultado final")
     
     # Detectar mes de los archivos por nombre
@@ -2713,13 +2717,13 @@ def tab_brp():
         mes_pie = next((m for t, m in meses_detectados if t == 'PIE'), None)
         if mes_sep and mes_pie:
             if mes_sep == mes_pie:
-                st.success(f"✅ Ambos archivos son de **{mes_sep}**")
+                st.success(f"Ambos archivos son de **{mes_sep}**")
             else:
-                st.error(f"⚠️ **Meses diferentes:** SEP={mes_sep}, PIE={mes_pie}")
+                st.error(f"**Meses diferentes:** SEP={mes_sep}, PIE={mes_pie}")
     
     st.markdown("---")
     
-    btn_text = "🔍 VALIDAR ARCHIVOS" if solo_validar else "📊 DISTRIBUIR BRP"
+    btn_text = "VALIDAR ARCHIVOS"if solo_validar else "DISTRIBUIR BRP"
     
     if st.button(btn_text, key="btn_brp", width='stretch'):
         processor = BRPProcessor()
@@ -2729,7 +2733,7 @@ def tab_brp():
 
         def callback(val, msg):
             progress.progress(val / 100)
-            status.markdown(f"**⏳ {msg}**")
+            status.markdown(f"**{msg}**")
 
         try:
             # Crear archivos temporales
@@ -2768,12 +2772,12 @@ def tab_brp():
             total = brp_sep + brp_pie + brp_normal
 
             if solo_validar:
-                status.markdown("**✅ ¡Validación completada!**")
-                st.info("📋 Modo validación: revisa los datos antes de procesar definitivamente")
+                status.markdown("**¡Validación completada!**")
+                st.info("Modo validación: revisa los datos antes de procesar definitivamente")
             else:
-                status.markdown("**✅ ¡Completado!**")
+                status.markdown("**¡Completado!**")
                 success_box("¡Distribución de BRP completada!")
-                st.toast(f"BRP distribuido: {fmt_clp(total)}", icon="💰")
+                st.toast(f"BRP distribuido: {fmt_clp(total)}", icon=":material/payments:")
 
             # Leer bytes del Excel y hojas adicionales
             with open(out_path, 'rb') as f:
@@ -2814,7 +2818,7 @@ def tab_brp():
             }
 
         except Exception as e:
-            st.error(f"❌ **Error:** {format_user_error(e)}")
+            st.error(f"**Error:** {format_user_error(e)}")
             with st.expander("Ver detalles técnicos"):
                 st.code(str(e))
 
@@ -2859,7 +2863,7 @@ def tab_brp():
                 st.markdown('</div>', unsafe_allow_html=True)
             st.badge("BRP Total", color="violet")
 
-        res_tabs = st.tabs(["📈 Resumen", "📊 Gráficos", "🔍 Detalle", "📥 Descarga"])
+        res_tabs = st.tabs([":material/trending_up: Resumen", ":material/bar_chart: Gráficos", ":material/search: Detalle", ":material/download: Descarga"])
 
         with res_tabs[0]:
             if total > 0:
@@ -2869,7 +2873,7 @@ def tab_brp():
             if total > 0:
                 import plotly.express as px
 
-                st.markdown("##### 📊 Distribución Visual")
+                st.markdown("##### Distribución Visual")
 
                 col_chart1, col_chart2 = st.columns(2)
 
@@ -2920,7 +2924,7 @@ def tab_brp():
                 # Gráficos por escuela si hay RBD
                 df_rbd = cached.get('df_rbd')
                 if df_rbd is not None and not df_rbd.empty:
-                    st.markdown("##### 🏫 Distribución por Escuela")
+                    st.markdown("##### Distribución por Escuela")
                     show_charts_by_school(df_rbd)
             else:
                 st.info("No hay datos para graficar.")
@@ -2929,7 +2933,7 @@ def tab_brp():
             # Resumen por RBD
             df_rbd = cached.get('df_rbd')
             if df_rbd is not None and not df_rbd.empty:
-                st.markdown("##### 🏫 Resumen por Establecimiento")
+                st.markdown("##### Resumen por Establecimiento")
                 df_rbd_display = add_school_names(df_rbd).copy()
                 # Agregar fila de totales
                 money_cols_rbd = [c for c in df_rbd_display.columns if c not in ('RBD', 'ESCUELA') and df_rbd_display[c].dtype in ['float64', 'int64']]
@@ -2948,7 +2952,7 @@ def tab_brp():
 
             # Detalle por concepto con tabla cruzada DAEM/CPEIP + totales
             st.markdown("---")
-            st.markdown("##### 📊 Detalle por concepto (DAEM/CPEIP)")
+            st.markdown("##### Detalle por concepto (DAEM/CPEIP)")
             detalle_rows = []
             for subv in ['SEP', 'PIE', 'NORMAL']:
                 daem_r = df[f'DAEM_RECON_{subv}'].sum() if f'DAEM_RECON_{subv}' in df.columns else 0
@@ -2992,7 +2996,7 @@ def tab_brp():
             df_revision = cached.get('df_revision')
             if df_revision is not None and not df_revision.empty:
                 st.markdown("---")
-                st.markdown("##### ⚠️ Casos para Revisión")
+                st.markdown("##### Casos para Revisión")
 
                 exceden_44 = df_revision[df_revision['MOTIVO'] == 'EXCEDE 44 HORAS']
                 sin_liquidacion = df_revision[df_revision['MOTIVO'] == 'SIN LIQUIDACIÓN']
@@ -3000,19 +3004,19 @@ def tab_brp():
                 col1, col2 = st.columns(2)
                 with col1:
                     if len(exceden_44) > 0:
-                        st.badge(f"{len(exceden_44)} exceden 44hrs", icon="⚠️", color="orange")
+                        st.badge(f"{len(exceden_44)} exceden 44hrs", icon=":material/warning:", color="orange")
                 with col2:
                     if len(sin_liquidacion) > 0:
-                        st.badge(f"{len(sin_liquidacion)} sin liquidación", icon="ℹ️", color="blue")
+                        st.badge(f"{len(sin_liquidacion)} sin liquidación", icon=":material/info:", color="blue")
 
-                with st.expander("👀 Ver casos a revisar"):
+                with st.expander("Ver casos a revisar"):
                     show_revision_table(df_revision)
             else:
-                st.success("✅ No hay casos pendientes de revisión")
+                st.success("No hay casos pendientes de revisión")
 
         with res_tabs[3]:
             if not cached.get('solo_validar'):
-                st.markdown("##### 📁 Archivo generado")
+                st.markdown("##### Archivo generado")
                 st.markdown("""
                 El archivo contiene **5 hojas**:
                 - `BRP_DISTRIBUIDO` → Datos completos con montos MINEDUC originales
@@ -3026,7 +3030,7 @@ def tab_brp():
                 col_d1, col_d2 = st.columns(2)
                 with col_d1:
                     st.download_button(
-                        "📥 Excel Formateado",
+                        " Excel Formateado",
                         data=styled_brp_ind,
                         file_name="brp_distribuido.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -3037,7 +3041,7 @@ def tab_brp():
                         df_brp_csv = pd.read_excel(BytesIO(cached['excel_bytes']), sheet_name='BRP_DISTRIBUIDO', engine='openpyxl')
                         csv_brp = df_brp_csv.to_csv(index=False).encode('utf-8-sig')
                         st.download_button(
-                            "📥 CSV Detalle",
+                            " CSV Detalle",
                             data=csv_brp,
                             file_name="brp_distribuido.csv",
                             mime="text/csv",
@@ -3058,7 +3062,7 @@ def tab_duplicados():
     Pestaña opcional: se muestra solo si el usuario la activa en la sidebar.
     """
 
-    with st.expander("📖 ¿Cómo usar esta herramienta?", expanded=False):
+    with st.expander("¿Cómo usar esta herramienta?", expanded=False):
         show_tutorial([
             ("Carga el archivo principal", "Debe tener una columna llamada DUPLICADOS."),
             ("Carga el complementario", "Archivo adicional para cruzar información."),
@@ -3073,18 +3077,18 @@ def tab_duplicados():
     st.markdown("---")
     
     # Archivos
-    st.markdown("##### 📥 Archivos de Entrada")
+    st.markdown("##### Archivos de Entrada")
     
     col1, col2 = st.columns(2)
     
     with col1:
-        st.caption("📄 **Archivo Principal**")
+        st.caption("**Archivo Principal**")
         f1 = st.file_uploader("Principal", type=['xlsx', 'xls', 'csv'], key="dup_1", label_visibility="collapsed")
         if f1:
             st.success(f"✓ {f1.name}")
     
     with col2:
-        st.caption("📄 **Archivo Complementario**")
+        st.caption("**Archivo Complementario**")
         f2 = st.file_uploader("Complementario", type=['xlsx', 'xls', 'csv'], key="dup_2", label_visibility="collapsed")
         if f2:
             st.success(f"✓ {f2.name}")
@@ -3095,21 +3099,21 @@ def tab_duplicados():
     
     st.markdown("")
     
-    if st.button("🔄  PROCESAR DUPLICADOS", key="btn_dup", width='stretch'):
+    if st.button("PROCESAR DUPLICADOS", key="btn_dup", width='stretch'):
         processor = DuplicadosProcessor()
         df, error = process_files(processor, [f1, f2])
         
         if error:
-            st.error(f"❌ **Error:** {error}")
+            st.error(f"**Error:** {error}")
         else:
             success_box(f"Se consolidaron **{len(df)}** registros")
-            st.toast(f"Duplicados consolidados: {len(df)} registros", icon="🔄")
+            st.toast(f"Duplicados consolidados: {len(df)} registros", icon=":material/sync:")
 
             nombre = f"{Path(f1.name).stem}_consolidado.xlsx"
             _, col_dl, _ = st.columns([1, 2, 1])
             with col_dl:
                 st.download_button(
-                    "📥  DESCARGAR RESULTADO",
+                    "  DESCARGAR RESULTADO",
                     data=to_excel_buffer(df),
                     file_name=nombre,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -3127,7 +3131,7 @@ def tab_todo_en_uno():
     meses previos guardados en el BRPRepository y persiste el mes procesado.
     """
 
-    with st.expander("📖 ¿Cómo usar esta herramienta?", expanded=False):
+    with st.expander("¿Cómo usar esta herramienta?", expanded=False):
         show_tutorial([
             ("Carga los 3 archivos BRUTOS", "Arrastra SEP bruto, PIE bruto y web_sostenedor juntos."),
             ("Indica el mes", "Escribe el período en formato YYYY-MM (ej: 2024-01)."),
@@ -3146,7 +3150,7 @@ def tab_todo_en_uno():
         st.session_state.todouno_files = {'sep': None, 'pie': None, 'web': None}
 
     # Uploader múltiple
-    st.markdown("##### 📥 Cargar Archivos BRUTOS")
+    st.markdown("##### Cargar Archivos BRUTOS")
     st.caption("Arrastra los 3 archivos: **SEP bruto**, **PIE bruto** y **web_sostenedor**")
 
     uploaded_files = st.file_uploader(
@@ -3167,11 +3171,11 @@ def tab_todo_en_uno():
             st.session_state.todouno_files['pie'] = f
 
     # Mostrar estado de archivos detectados
-    st.markdown("##### 📋 Archivos detectados")
+    st.markdown("##### Archivos detectados")
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.markdown("**📄 SEP (bruto)**")
+        st.markdown("**SEP (bruto)**")
         f_sep = st.session_state.todouno_files['sep']
         if f_sep:
             st.success(f"✓ {f_sep.name}")
@@ -3179,7 +3183,7 @@ def tab_todo_en_uno():
             st.warning("Falta")
 
     with col2:
-        st.markdown("**📄 PIE/Normal (bruto)**")
+        st.markdown("**PIE/Normal (bruto)**")
         f_pie = st.session_state.todouno_files['pie']
         if f_pie:
             st.success(f"✓ {f_pie.name}")
@@ -3187,7 +3191,7 @@ def tab_todo_en_uno():
             st.warning("Falta")
 
     with col3:
-        st.markdown("**📋 MINEDUC (web)**")
+        st.markdown("**MINEDUC (web)**")
         f_web = st.session_state.todouno_files['web']
         if f_web:
             st.success(f"✓ {f_web.name}")
@@ -3195,7 +3199,7 @@ def tab_todo_en_uno():
             st.warning("Falta")
 
     # Botón para limpiar
-    if st.button("🔄 Limpiar archivos", key="btn_clear_todouno"):
+    if st.button("Limpiar archivos", key="btn_clear_todouno"):
         st.session_state.todouno_files = {'sep': None, 'pie': None, 'web': None}
         st.rerun()
 
@@ -3207,7 +3211,7 @@ def tab_todo_en_uno():
     st.markdown("---")
 
     # Configuración del procesamiento
-    st.markdown("##### ⚙️ Configuración")
+    st.markdown("##### Configuración")
 
     col1, col2 = st.columns(2)
 
@@ -3215,7 +3219,7 @@ def tab_todo_en_uno():
         # Selector de mes
         mes_default = datetime.now().strftime("%Y-%m")
         mes = st.text_input(
-            "📅 Mes de procesamiento",
+            " Mes de procesamiento",
             value=mes_default,
             help="Formato: YYYY-MM (ej: 2024-01)"
         )
@@ -3224,7 +3228,7 @@ def tab_todo_en_uno():
         # Checkbox para comparar
         meses_disponibles = repo.obtener_meses_disponibles()
         comparar = st.checkbox(
-            "📊 Comparar con mes anterior",
+            " Comparar con mes anterior",
             value=False,
             disabled=len(meses_disponibles) == 0,
             help="Compara con un procesamiento guardado anteriormente"
@@ -3272,7 +3276,7 @@ def tab_todo_en_uno():
 
     tipo_pago_sel = None
     if tipos_pago_disponibles:
-        st.markdown("##### 💼 Filtro de Tipo de Pago")
+        st.markdown("##### Filtro de Tipo de Pago")
         st.caption("Excluye tipos como **Reajuste** o **Reliquidación** que inflan las horas")
         tipo_pago_sel = st.multiselect(
             "Tipos a incluir en el cálculo",
@@ -3283,14 +3287,14 @@ def tab_todo_en_uno():
 
     # Opción para guardar en BD
     guardar_bd = st.checkbox(
-        "💾 Guardar en base de datos (para comparaciones futuras)",
+        " Guardar en base de datos (para comparaciones futuras)",
         value=True
     )
 
     st.markdown("---")
 
     # Botón de procesar
-    if st.button("🚀 PROCESAR TODO", key="btn_todouno", width='stretch'):
+    if st.button("PROCESAR TODO", key="btn_todouno", width='stretch'):
         processor = IntegradoProcessor()
 
         progress = st.progress(0)
@@ -3298,7 +3302,7 @@ def tab_todo_en_uno():
 
         def callback(val, msg):
             progress.progress(val / 100)
-            status.markdown(f"**⏳ {msg}**")
+            status.markdown(f"**{msg}**")
 
         try:
             # Crear archivos temporales
@@ -3333,8 +3337,8 @@ def tab_todo_en_uno():
             )
 
             progress.progress(100)
-            status.markdown("**✅ ¡Procesamiento completado!**")
-            st.toast("Procesamiento integrado completado", icon="🎯")
+            status.markdown("**¡Procesamiento completado!**")
+            st.toast("Procesamiento integrado completado", icon=":material/task_alt:")
 
             # Mostrar alertas de columnas
             show_column_alerts(processor.brp_processor.get_column_alerts())
@@ -3343,9 +3347,9 @@ def tab_todo_en_uno():
             if guardar_bd:
                 try:
                     repo.guardar_procesamiento(mes, df_result)
-                    st.success(f"💾 Datos guardados en base de datos para {mes}")
+                    st.success(f"Datos guardados en base de datos para {mes}")
                 except Exception as e:
-                    st.warning(f"⚠️ No se pudo guardar en BD: {str(e)}")
+                    st.warning(f"No se pudo guardar en BD: {str(e)}")
 
             # Realizar comparación si está habilitada
             comparacion = None
@@ -3354,7 +3358,7 @@ def tab_todo_en_uno():
                     comparador = ComparadorMeses(repo)
                     comparacion = comparador.comparar(mes_anterior, mes)
                 except Exception as e:
-                    st.warning(f"⚠️ No se pudo realizar comparación: {str(e)}")
+                    st.warning(f"No se pudo realizar comparación: {str(e)}")
 
             # Leer bytes del Excel antes de que se limpie
             with open(out_path, 'rb') as f:
@@ -3409,7 +3413,7 @@ def tab_todo_en_uno():
             }
 
         except Exception as e:
-            st.error(f"❌ **Error:** {format_user_error(e)}")
+            st.error(f"**Error:** {format_user_error(e)}")
             import traceback
             with st.expander("Ver detalles técnicos"):
                 st.code(traceback.format_exc())
@@ -3460,7 +3464,7 @@ def tab_todo_en_uno():
                 st.badge("BRP Total", color="violet")
                 st.markdown('</div>', unsafe_allow_html=True)
 
-        res_tabs = st.tabs(["📈 Resumen", "📊 Gráficos", "🔍 Explorador", "📥 Descarga"])
+        res_tabs = st.tabs([":material/trending_up: Resumen", ":material/bar_chart: Gráficos", ":material/search: Explorador", ":material/download: Descarga"])
 
         with res_tabs[0]:
             if brp_total > 0:
@@ -3468,7 +3472,7 @@ def tab_todo_en_uno():
 
             if comparacion:
                 st.markdown("---")
-                st.markdown("##### 📊 Comparación con Mes Anterior")
+                st.markdown("##### Comparación con Mes Anterior")
 
                 resumen = comparacion.get('resumen', {})
 
@@ -3501,9 +3505,9 @@ def tab_todo_en_uno():
                 with col2:
                     cambios_monto = resumen.get('cambios_monto_significativo', 0)
                     if cambios_monto > 0:
-                        st.warning(f"⚠️ {cambios_monto} docentes con cambio de monto >10%")
+                        st.warning(f"{cambios_monto} docentes con cambio de monto >10%")
 
-                with st.expander("👀 Ver detalles de comparación"):
+                with st.expander("Ver detalles de comparación"):
                     nuevos = comparacion.get('docentes_nuevos', [])
                     if nuevos:
                         st.markdown("**Docentes Nuevos:**")
@@ -3533,7 +3537,7 @@ def tab_todo_en_uno():
             if brp_total > 0:
                 import plotly.express as px
 
-                st.markdown("##### 📊 Distribución Visual")
+                st.markdown("##### Distribución Visual")
 
                 chart_type = st.selectbox(
                     "Tipo de gráfico",
@@ -3573,7 +3577,7 @@ def tab_todo_en_uno():
             show_data_explorer(df_result, key_prefix="todo")
 
         with res_tabs[3]:
-            st.markdown("##### 📥 Descargas")
+            st.markdown("##### Descargas")
 
             styled_brp = _style_excel_workbook(excel_bytes)
 
@@ -3581,7 +3585,7 @@ def tab_todo_en_uno():
 
             with col_dl1:
                 st.download_button(
-                    "📥 Excel Formateado",
+                    " Excel Formateado",
                     data=styled_brp,
                     file_name=f"brp_distribuido_{cached_mes}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -3591,7 +3595,7 @@ def tab_todo_en_uno():
             with col_dl2:
                 if word_bytes:
                     st.download_button(
-                        "📄 Informe Word",
+                        " Informe Word",
                         data=word_bytes,
                         file_name=f"informe_brp_{cached_mes}.docx",
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -3601,14 +3605,14 @@ def tab_todo_en_uno():
             with col_dl3:
                 csv_data = df_result.to_csv(index=False).encode('utf-8-sig')
                 st.download_button(
-                    "📥 CSV Detalle",
+                    " CSV Detalle",
                     data=csv_data,
                     file_name=f"brp_detalle_{cached_mes}.csv",
                     mime="text/csv",
                     key="dl_todo_csv",
                 )
 
-            with st.expander("👀 Vista previa del resultado"):
+            with st.expander("Vista previa del resultado"):
                 st.dataframe(
                     df_result.head(20).style.format(format_money_cols(df_result.head(20))),
                     width='stretch', hide_index=True,
@@ -3785,7 +3789,7 @@ def _render_docentes_tab(excel_bytes):
             orientation='L',
         )
         st.download_button(
-            "📥 Descargar PDF del docente",
+            " Descargar PDF del docente",
             data=pdf_doc_bytes,
             file_name=f"docente_{sel_rut}.pdf",
             mime="application/pdf",
@@ -4095,7 +4099,7 @@ def _display_lote_anual_results(stats, excel_data, anio):
             st.badge("BRP Total", color="violet")
             st.markdown('</div>', unsafe_allow_html=True)
 
-    res_tabs = st.tabs(["📈 Resumen", "🏫 Por Establecimiento", "👥 Docentes", "📋 Horas", "📊 Gráficos", "🔍 Explorador", "⚠️ Alertas", "📥 Descarga"])
+    res_tabs = st.tabs([":material/trending_up: Resumen", ":material/school: Por Establecimiento", ":material/groups: Docentes", ":material/list_alt: Horas", ":material/bar_chart: Gráficos", ":material/search: Explorador", ":material/warning: Alertas", ":material/download: Descarga"])
 
     with res_tabs[0]:
         st.markdown("### Resumen Anual")
@@ -4318,7 +4322,7 @@ def _display_lote_anual_results(stats, excel_data, anio):
                 excel_estab = to_styled_excel(df_estab, sheet_name='POR_ESTABLECIMIENTO',
                                               title=f'CPEIP por Establecimiento - {anio}')
                 st.download_button(
-                    "📥 Excel", data=excel_estab,
+                    " Excel", data=excel_estab,
                     file_name=f"CPEIP_por_establecimiento_{anio}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="dl_estab_xlsx",
@@ -4326,7 +4330,7 @@ def _display_lote_anual_results(stats, excel_data, anio):
             with col_dl2:
                 csv_bytes = df_estab.to_csv(index=False).encode('utf-8-sig')
                 st.download_button(
-                    "📥 CSV", data=csv_bytes,
+                    " CSV", data=csv_bytes,
                     file_name=f"CPEIP_por_establecimiento_{anio}.csv",
                     mime="text/csv",
                     key="dl_estab_csv",
@@ -4337,7 +4341,7 @@ def _display_lote_anual_results(stats, excel_data, anio):
                         df_estab, title=f"CPEIP por Establecimiento - {anio}",
                     )
                     st.download_button(
-                        "📥 PDF", data=pdf_bytes,
+                        " PDF", data=pdf_bytes,
                         file_name=f"CPEIP_por_establecimiento_{anio}.pdf",
                         mime="application/pdf",
                         key="dl_estab_pdf",
@@ -4510,7 +4514,7 @@ def _display_lote_anual_results(stats, excel_data, anio):
         col_d1, col_d2, col_d3 = st.columns(3)
         with col_d1:
             st.download_button(
-                "📥 Excel Formateado",
+                " Excel Formateado",
                 data=styled_excel,
                 file_name=f"BRP_ANUAL_{anio}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -4523,7 +4527,7 @@ def _display_lote_anual_results(stats, excel_data, anio):
                 df_pdf = append_totals_row(df_pdf, label_col='MES', label='TOTAL')
                 pdf_resumen = generate_pdf_from_df(df_pdf, title=f'Resumen Anual BRP {anio}')
                 st.download_button(
-                    "📥 PDF Resumen",
+                    " PDF Resumen",
                     data=pdf_resumen,
                     file_name=f"BRP_RESUMEN_{anio}.pdf",
                     mime="application/pdf",
@@ -4537,7 +4541,7 @@ def _display_lote_anual_results(stats, excel_data, anio):
                 df_csv = _read_detalle_brp(excel_bytes)
                 csv_data = df_csv.to_csv(index=False).encode('utf-8-sig')
                 st.download_button(
-                    "📥 CSV Detalle",
+                    " CSV Detalle",
                     data=csv_data,
                     file_name=f"BRP_DETALLE_{anio}.csv",
                     mime="text/csv",
@@ -4564,7 +4568,7 @@ def tab_lote_anual():
     El campo "Año (modo 1 año)" solo aplica al flujo de un año.
     """
 
-    with st.expander("📖 ¿Cómo usar el Lote Anual?", expanded=False):
+    with st.expander("¿Cómo usar el Lote Anual?", expanded=False):
         show_tutorial([
             ("Prepara los archivos", "Opción A: SEP y PIE por mes + web sostenedor. Opción B: un archivo anual consolidado (con columnas Periodo y Tipo_de_Contrato) + web sostenedor. Opcionalmente, agrega un archivo de horas por subvención (con columnas Mes, Rut, SEP, PIE, SN) para distribución real."),
             ("Nombra los archivos", "Los archivos se detectan por nombre. Ejemplo: 'web_sostenedor.xlsx', 'SEP ENERO 2026.xlsx'. Un archivo anual consolidado se detecta automáticamente."),
@@ -4581,7 +4585,7 @@ def tab_lote_anual():
         anio = st.number_input("Año (modo 1 año)", min_value=2015, max_value=2030, value=2026, key="anual_anio")
 
     st.markdown("")
-    st.markdown("##### 📁 Archivos del Año")
+    st.markdown("##### Archivos del Año")
     st.caption(
         "Sube todos los archivos. Se detectan automáticamente por nombre "
         "(web*, sep*, *pie*/*sn*, *eib*) y mes (enero, febrero, etc.). "
@@ -4631,7 +4635,7 @@ def _grilla_confirmacion_lote_anual(file_tuples, shared_web=None):
     Reemplaza a la grilla de solo-lectura en el caso estándar (SEP/PIE/WEB por
     mes). Cada archivo llega con su Tipo y Mes autodetectados; el usuario puede
     corregirlos con menús desplegables. Los que necesitan atención (sin tipo o
-    sin mes — incluida la ambigüedad 'sep' = SEP o septiembre) se marcan con ⚠️.
+    sin mes — incluida la ambigüedad 'sep' = SEP o septiembre) se marcan con .
 
     Devuelve un dict monthly (mes '01'..'12' -> MonthlyFileSet) reconstruido a
     partir de lo CONFIRMADO por el usuario (no de la detección automática).
@@ -4656,17 +4660,17 @@ def _grilla_confirmacion_lote_anual(file_tuples, shared_web=None):
         m = detect_month_from_filename(fname)
         atencion = (t is None) or (m is None)
         rows.append({
-            'Revisar': '⚠️' if atencion else '✓',
+            'Revisar': 'Revisar' if atencion else 'OK',
             'Archivo': fname,
             'Tipo': TIPO_LABELS.get(t, IGNORAR),
             'Mes': MESES_NUM_TO_NAME.get(m, SIN_MES) if m else SIN_MES,
         })
     df = pd.DataFrame(rows)
 
-    st.markdown("##### ✅ Confirma la detección (corrige Tipo o Mes si algo quedó mal)")
+    st.markdown("##### Confirma la detección (corrige Tipo o Mes si algo quedó mal)")
     st.caption(
         "Revisa cada archivo y corrige el **Tipo** o el **Mes** con los menús. "
-        "Los ⚠️ necesitan tu atención (sin mes o sin tipo). Ojo con la ambigüedad "
+        "Los  necesitan tu atención (sin mes o sin tipo). Ojo con la ambigüedad "
         "'sep' = subvención SEP o septiembre: aquí decides tú. Usa '(ignorar)' "
         "para excluir un archivo."
     )
@@ -4716,7 +4720,7 @@ def _grilla_confirmacion_lote_anual(file_tuples, shared_web=None):
 
     if sin_asignar:
         st.warning(
-            "⚠️ Sin mes asignado (no se incluirán hasta que elijas su mes arriba): "
+            " Sin mes asignado (no se incluirán hasta que elijas su mes arriba): "
             + ", ".join(f"`{x}`" for x in sin_asignar)
         )
 
@@ -4740,7 +4744,7 @@ def _tab_lote_anual_single(file_tuples, tmp_paths, anio):
     shared_web = getattr(processor, '_shared_web', None)
     if shared_web:
         st.info(
-            f"📋 **Web sostenedor compartido:** {shared_web[0]} "
+            f" **Web sostenedor compartido:** {shared_web[0]} "
             f"(se filtrará automáticamente por mes)"
         )
 
@@ -4748,7 +4752,7 @@ def _tab_lote_anual_single(file_tuples, tmp_paths, anio):
     horas_file = getattr(processor, '_horas_file', None)
     if horas_file:
         st.info(
-            f"📋 **Archivo de horas por subvención detectado:** {horas_file[0]} "
+            f" **Archivo de horas por subvención detectado:** {horas_file[0]} "
             f"(distribución real SEP/PIE/SN)"
         )
 
@@ -4756,7 +4760,7 @@ def _tab_lote_anual_single(file_tuples, tmp_paths, anio):
     anual_file = getattr(processor, '_anual_file', None)
     if anual_file:
         st.info(
-            f"📊 **Archivo anual consolidado detectado:** {anual_file[0]} — "
+            f" **Archivo anual consolidado detectado:** {anual_file[0]} — "
             f"se dividió automáticamente en archivos SEP/PIE sintéticos por mes."
         )
 
@@ -4773,7 +4777,7 @@ def _tab_lote_anual_single(file_tuples, tmp_paths, anio):
         # Avisos de clasificación (mes/tipo no detectado, horas sin columna Mes)
         classif_warnings = getattr(processor, 'classification_warnings', [])
         if classif_warnings:
-            st.warning(f"⚠️ **{len(classif_warnings)} archivo(s) con problemas de detección:**")
+            st.warning(f"**{len(classif_warnings)} archivo(s) con problemas de detección:**")
             for w in classif_warnings:
                 st.markdown(f"- {w}")
 
@@ -4906,7 +4910,7 @@ def _tab_lote_anual_single(file_tuples, tmp_paths, anio):
 
     st.markdown("")
     if st.button(
-        f"▶️  PROCESAR {len(meses_completos)} MESES",
+        f"PROCESAR {len(meses_completos)} MESES",
         key="btn_anual",
         width='stretch'
     ):
@@ -5025,7 +5029,7 @@ def _tab_lote_anual_multi(file_tuples, tmp_paths, detected_years, unique_years):
     st.markdown("")
     total_archivos_con_anio = sum(len(v) for v in detected_years.values())
     if st.button(
-        f"▶️  PROCESAR {len(unique_years)} ANOS ({total_archivos_con_anio} archivos)",
+        f"PROCESAR {len(unique_years)} ANOS ({total_archivos_con_anio} archivos)",
         key="btn_anual_multi",
         width='stretch'
     ):
@@ -5588,7 +5592,7 @@ def tab_horas_contrato():
     Streamlit y se renderiza con _render_horas_contrato_results.
     """
 
-    with st.expander("📖 ¿Cómo usar Horas por Contrato?", expanded=False):
+    with st.expander("¿Cómo usar Horas por Contrato?", expanded=False):
         show_tutorial([
             ("Sube archivos REM", "Sube los archivos REM mensuales (Excel o CSV). El nombre debe contener el mes, ej: 'REM 01 2026.xlsx'."),
             ("Revisa la detección", "Verifica que el mes se detectó correctamente para cada archivo."),
@@ -5596,7 +5600,7 @@ def tab_horas_contrato():
         ])
 
     st.markdown("---")
-    st.markdown("##### 📁 Archivos REM Mensuales")
+    st.markdown("##### Archivos REM Mensuales")
     st.caption(
         "Sube los archivos REM de cada mes. Se detecta automáticamente el mes del nombre del archivo. "
         "Las horas se clasifican por tipo de subvención según el campo 'tipocontrato'."
@@ -5676,7 +5680,7 @@ def tab_comparar_meses():
     de BRP, docentes y escuelas entre los meses cargados.
     """
 
-    with st.expander("📖 ¿Cómo usar esta herramienta?", expanded=False):
+    with st.expander("¿Cómo usar esta herramienta?", expanded=False):
         show_tutorial([
             ("Sube archivos BRP", "Arrastra los archivos Excel generados por 'Todo en Uno' (brp_distribuido*.xlsx)."),
             ("Detecta meses", "El sistema lee la columna 'Mes' o detecta el mes del nombre del archivo."),
@@ -5768,7 +5772,7 @@ def tab_comparar_meses():
     import plotly.graph_objects as go
     import plotly.express as px
 
-    chart_tabs = st.tabs(["📈 Evolución BRP", "🏫 Por Establecimiento", "👥 Docentes", "📊 DAEM vs CPEIP", "🔄 Cambios"])
+    chart_tabs = st.tabs([":material/trending_up: Evolución BRP", ":material/school: Por Establecimiento", ":material/groups: Docentes", ":material/bar_chart: DAEM vs CPEIP", ":material/sync: Cambios"])
 
     with chart_tabs[0]:
         # Evolución BRP por tipo de subvención
@@ -6078,7 +6082,7 @@ def tab_remuneraciones_mes():
     archivo de horas por subvención (columna Mes). A diferencia del Lote Anual
     (que calcula BRP y exige el web sostenedor), aquí NO se necesita web.
     """
-    with st.expander("📖 ¿Cómo usar Remuneraciones x Mes?", expanded=False):
+    with st.expander("¿Cómo usar Remuneraciones x Mes?", expanded=False):
         show_tutorial([
             ("Sube las planillas", "Un archivo por mes y tipo: '1 SEP.xlsx', '1 SNPIE.xlsx', … (cada uno con su Hoja1 de sueldos)."),
             ("Sube el archivo de horas", "UN solo archivo con columnas Mes, Rut, SEP, PIE, SN, TOTAL HORAS."),
@@ -6086,12 +6090,12 @@ def tab_remuneraciones_mes():
         ])
 
     st.markdown("---")
-    st.markdown("##### 📁 Planillas de sueldo (SEP y SN+PIE, una por mes)")
+    st.markdown("##### Planillas de sueldo (SEP y SN+PIE, una por mes)")
     planillas = st.file_uploader(
         "Planillas SEP / SNPIE (Excel con Hoja1)", type=['xlsx', 'xls'],
         accept_multiple_files=True, key="rem_planillas")
 
-    st.markdown("##### ⏱ Archivo ÚNICO de horas por subvención")
+    st.markdown("##### Archivo ÚNICO de horas por subvención")
     horas_file = st.file_uploader(
         "Horas (columnas: Mes, Rut, SEP, PIE, SN, TOTAL HORAS)",
         type=['xlsx', 'xls', 'csv'], key="rem_horas")
@@ -6111,16 +6115,16 @@ def tab_remuneraciones_mes():
         t = detect_file_type(f.name)
         m = detect_month_from_filename(f.name)
         filas.append({
-            'Revisar': '⚠️' if (t not in ('sep', 'pie') or not m) else '✓',
+            'Revisar': 'Revisar' if (t not in ('sep', 'pie') or not m) else 'OK',
             'Archivo': f.name,
             'Tipo': TIPO_LABELS.get(t, IGNORAR),
             'Mes': MESES_NUM_TO_NAME.get(m, SIN_MES) if m else SIN_MES,
         })
     df_grid = pd.DataFrame(filas)
 
-    st.markdown("##### ✅ Confirma la detección")
+    st.markdown("##### Confirma la detección")
     st.caption("Corrige el **Tipo** (SEP o SN+PIE) o el **Mes** si algo quedó mal. "
-               "Los ⚠️ necesitan tu atención. Usa '(ignorar)' para excluir un archivo.")
+               "Los  necesitan tu atención. Usa '(ignorar)' para excluir un archivo.")
     edited = st.data_editor(
         df_grid, width='stretch', hide_index=True, key='rem_grid',
         column_config={
@@ -6138,7 +6142,7 @@ def tab_remuneraciones_mes():
         value=False, key="rem_conservar_h",
         help="Solo aplica si la planilla trae haberes con código (H001 SUELDO BASE...).")
 
-    if st.button("▶️  PROCESAR REMUNERACIONES", type="primary", key="rem_procesar", width='stretch'):
+    if st.button("PROCESAR REMUNERACIONES", type="primary", key="rem_procesar", width='stretch'):
         file_por_nombre = {f.name: f for f in planillas}
         horas = _rem_read_any(horas_file)
         mes_col = pd.to_numeric(horas.get('Mes'), errors='coerce')
@@ -6179,13 +6183,13 @@ def tab_remuneraciones_mes():
 
         avisos = res.get('avisos', [])
         if avisos:
-            st.warning("⚠️ **Avisos:**")
+            st.warning("**Avisos:**")
             for a in avisos:
                 st.markdown(f"- {a}")
 
         if sheets:
             st.success(
-                f"✅ Se procesaron **{len(sheets)}** planilla(s). Formato de siempre: "
+                f" Se procesaron **{len(sheets)}** planilla(s). Formato de siempre: "
                 f"planilla completa + columnas prorrateadas (SEP, o PIE/SN) + HORAS_VALIDAS."
             )
             resumen = pd.DataFrame(
@@ -6200,7 +6204,7 @@ def tab_remuneraciones_mes():
             _, col_dl, _ = st.columns([1, 2, 1])
             with col_dl:
                 st.download_button(
-                    "📥  DESCARGAR (Excel: una hoja por planilla)",
+                    "  DESCARGAR (Excel: una hoja por planilla)",
                     data=_rem_excel_bytes(sheets),
                     file_name="Remuneraciones_por_Mes.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -6216,49 +6220,80 @@ def tab_remuneraciones_mes():
 def main():
     """Punto de entrada de la aplicación Streamlit.
 
-    Arma la barra lateral (versión, listado de escuelas, preferencias de
-    pestañas visibles y gráficos del último procesamiento), muestra la
-    cabecera y el aviso de actualización, y luego construye dinámicamente
-    las pestañas principales. Cada pestaña delega en una función tab_*:
-    "Todo en Uno", "SEP/PIE/EIB", "Lote Anual", "Comparar Meses" y
-    "Horas x Contrato" siempre están visibles; "Distribución BRP" y
-    "Duplicados" solo aparecen si el usuario las activa en preferencias.
+    La navegación vive en el menú lateral, agrupada por secciones (st.navigation):
+    Procesar (Todo en Uno, SEP/PIE/EIB, Remuneraciones x Mes), Anual (Lote Anual)
+    y Análisis (Comparar Meses, Horas x Contrato). "Distribución BRP" y
+    "Duplicados" forman la sección Herramientas y solo aparecen si el usuario las
+    activa en "Secciones visibles". Bajo el menú van las ayudas (establecimientos,
+    archivos requeridos, glosario) y los gráficos del último procesamiento.
+
+    Nota: con navegación por páginas solo se ejecuta la sección abierta, así que los
+    widgets de las otras (archivos subidos, grillas) se reinician al cambiar de
+    sección; los resultados ya procesados se conservan en session_state.
     """
-    # Sidebar: información fija (versión, escuelas, glosario) + preferencias.
+    # Preferencias de secciones visibles (se leen del estado, que persiste entre páginas).
+    ver_brp = st.session_state.get("pref_brp", False)
+    ver_dup = st.session_state.get("pref_dup", False)
+
+    secciones = {
+        "Procesar": [
+            st.Page(tab_todo_en_uno, title="Todo en Uno", icon=":material/bolt:",
+                    url_path="todo-en-uno", default=True),
+            st.Page(tab_sep_pie, title="SEP / PIE / EIB", icon=":material/table_chart:",
+                    url_path="sep-pie-eib"),
+            st.Page(tab_remuneraciones_mes, title="Remuneraciones x Mes",
+                    icon=":material/receipt_long:", url_path="remuneraciones-mes"),
+        ],
+        "Anual": [
+            st.Page(tab_lote_anual, title="Lote Anual", icon=":material/calendar_month:",
+                    url_path="lote-anual"),
+        ],
+        "Análisis": [
+            st.Page(tab_comparar_meses, title="Comparar Meses", icon=":material/compare_arrows:",
+                    url_path="comparar-meses"),
+            st.Page(tab_horas_contrato, title="Horas x Contrato", icon=":material/schedule:",
+                    url_path="horas-contrato"),
+        ],
+    }
+    herramientas = []
+    if ver_brp:
+        herramientas.append(st.Page(tab_brp, title="Distribución BRP",
+                                    icon=":material/payments:", url_path="distribucion-brp"))
+    if ver_dup:
+        herramientas.append(st.Page(tab_duplicados, title="Duplicados",
+                                    icon=":material/content_copy:", url_path="duplicados"))
+    if herramientas:
+        secciones["Herramientas"] = herramientas
+
+    # Streamlit dibuja el menú arriba del todo en la barra lateral; lo demás va debajo.
+    pagina = st.navigation(secciones, position="sidebar")
+
     with st.sidebar:
-        st.markdown("### 📊 RemuPro")
-        st.caption(f"v{VERSION}")
         st.markdown("---")
 
         escuelas = get_rbd_map()
-        st.markdown(f"**🏫 Establecimientos:** {len(escuelas)}")
-
-        # Mostrar lista de escuelas
-        with st.expander("Ver escuelas"):
+        with st.expander(f"Establecimientos ({len(escuelas)})"):
             for rbd, nombre in sorted(escuelas.items(), key=lambda x: x[1]):
                 st.markdown(f"**{rbd}** — {nombre}")
 
-        st.markdown("---")
-        st.markdown("**Archivos requeridos:**")
-        st.markdown("""
-        - `web*` → MINEDUC
-        - `sep*` → SEP procesado
-        - `sn*` / `*pie*` → PIE/Normal
-        """)
+        with st.expander("Ayuda rápida"):
+            st.markdown("**Archivos requeridos**")
+            st.markdown("""
+            - `web*` → MINEDUC
+            - `sep*` → SEP procesado
+            - `sn*` / `*pie*` → PIE/Normal
+            """)
+            st.caption("DAEM = Subvención (municipio)")
+            st.caption("CPEIP = Transferencia (ministerio)")
 
-        st.markdown("---")
-        st.caption("DAEM = Subvención (municipio)")
-        st.caption("CPEIP = Transferencia (ministerio)")
-
-        # Preferencias de pestañas visibles
-        st.markdown("---")
-        with st.expander("Pestañas visibles", expanded=False):
-            show_brp = st.checkbox("Distribución BRP", value=False, key="pref_brp")
-            show_dup = st.checkbox("Duplicados", value=False, key="pref_dup")
+        with st.expander("Secciones visibles"):
+            st.checkbox("Distribución BRP", value=False, key="pref_brp")
+            st.checkbox("Duplicados", value=False, key="pref_dup")
 
         # Charts dinámicos del último procesamiento
-        st.markdown("---")
         show_sidebar_charts()
+
+        st.caption(f"RemuPro v{VERSION}")
 
     show_header()
 
@@ -6266,22 +6301,7 @@ def main():
     # descomentar la línea (la versión y UPDATES siguen en config/version.py).
     # show_update_banner()
 
-    # Pestañas dinámicas: las 5 base siempre; BRP/Duplicados según preferencias.
-    # tab_names y tab_funcs se mantienen en paralelo (mismo índice = misma pestaña).
-    tab_names = ["⚡ Todo en Uno", "📊 SEP / PIE / EIB", "📅 Lote Anual", "📉 Comparar Meses", "⏱ Horas x Contrato", "🧾 Remuneraciones x Mes"]
-    tab_funcs = [tab_todo_en_uno, tab_sep_pie, tab_lote_anual, tab_comparar_meses, tab_horas_contrato, tab_remuneraciones_mes]
-
-    if st.session_state.get("pref_brp"):
-        tab_names.append("💰 Distribución BRP")
-        tab_funcs.append(tab_brp)
-    if st.session_state.get("pref_dup"):
-        tab_names.append("🔄 Duplicados")
-        tab_funcs.append(tab_duplicados)
-
-    tabs = st.tabs(tab_names)
-    for tab, func in zip(tabs, tab_funcs):
-        with tab:
-            func()
+    pagina.run()
 
     # Footer
     st.markdown(f"""
