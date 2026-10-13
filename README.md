@@ -27,13 +27,13 @@ Toma las planillas de sueldos y de horas del DAEM y:
 
 | Pestaña | Para qué sirve |
 |---|---|
-| ⚡ **Todo en Uno** | Flujo completo de un mes: SEP + PIE + web sostenedor (+ REM opcional) → BRP distribuido, Excel combinado e informe Word. |
-| 📊 **SEP / PIE / EIB** | Procesa un solo archivo (hojas `HORAS` y `TOTAL`) con el prorrateo de la subvención elegida. |
-| 📅 **Lote Anual** | Procesa los 12 meses de golpe, con grilla editable para confirmar mes y tipo de cada archivo. |
-| 📉 **Comparar Meses** | Compara dos o más meses ya procesados. |
-| ⏱ **Horas x Contrato** | Clasifica las horas de cada persona por tipo de contrato a partir de los archivos REM. |
-| 🧾 **Remuneraciones x Mes** | Prorratea sueldos por SEP/PIE/SN con un único archivo de horas, **sin BRP ni web sostenedor**. Reproduce el formato clásico `_procesado`. |
-| 💰 **Distribución BRP** y 🔄 **Duplicados** | Ocultas por defecto; se activan en la barra lateral → *Pestañas visibles*. |
+| **Todo en Uno** | Flujo completo de un mes: SEP + PIE + web sostenedor (+ REM opcional) → BRP distribuido, Excel combinado e informe Word. |
+| **SEP / PIE / EIB** | Procesa un solo archivo (hojas `HORAS` y `TOTAL`) con el prorrateo de la subvención elegida. |
+| **Lote Anual** | Procesa los 12 meses de golpe, con grilla editable para confirmar mes y tipo de cada archivo. |
+| **Comparar Meses** | Compara dos o más meses ya procesados. |
+| **Horas x Contrato** | Clasifica las horas de cada persona por tipo de contrato a partir de los archivos REM. |
+| **Remuneraciones x Mes** | Prorratea sueldos por SEP/PIE/SN con un único archivo de horas, **sin BRP ni web sostenedor**. Reproduce el formato clásico `_procesado`. |
+| **Distribución BRP** y **Duplicados** | Ocultas por defecto; se activan en la barra lateral → *Pestañas visibles*. |
 
 ## Inicio rápido
 

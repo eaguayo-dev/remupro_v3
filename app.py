@@ -985,6 +985,13 @@ st.markdown("""
         background: #3b82f6 !important;
         color: white !important;
     }
+
+    /* Streamlit dibuja una línea de color primario bajo la pestaña activa; con la
+       pestaña ya rellena de azul se veía como un subrayado rojo. Se oculta. */
+    .stTabs [data-baseweb="tab-highlight"],
+    .stTabs [data-baseweb="tab-border"] {
+        display: none !important;
+    }
     
     /* ===== BOTONES ===== */
     .stButton > button {
@@ -2727,7 +2734,7 @@ def tab_brp():
     
     # Verificar que están todos
     if not all([f_web, f_sep, f_pie]):
-        warning_box("Carga los **3 archivos** para continuar")
+        warning_box("Carga los <b>3 archivos</b> para continuar")
         return
 
     # Detectar meses presentes en el web sostenedor. Se escribe a un archivo
@@ -3262,7 +3269,7 @@ def tab_todo_en_uno():
         if f_sep:
             st.success(f"✓ {f_sep.name}")
         else:
-            st.warning("⬜ No detectado")
+            st.warning("Falta")
 
     with col2:
         st.markdown("**📄 PIE/Normal (bruto)**")
@@ -3270,7 +3277,7 @@ def tab_todo_en_uno():
         if f_pie:
             st.success(f"✓ {f_pie.name}")
         else:
-            st.warning("⬜ No detectado")
+            st.warning("Falta")
 
     with col3:
         st.markdown("**📋 MINEDUC (web)**")
@@ -3278,7 +3285,7 @@ def tab_todo_en_uno():
         if f_web:
             st.success(f"✓ {f_web.name}")
         else:
-            st.warning("⬜ No detectado")
+            st.warning("Falta")
 
     with col4:
         st.markdown("**📋 REM (opcional)**")
@@ -3286,7 +3293,7 @@ def tab_todo_en_uno():
         if f_rem:
             st.success(f"✓ {f_rem.name}")
         else:
-            st.info("⬜ Sin archivo REM")
+            st.info("Sin REM")
 
     # Botón para limpiar
     if st.button("🔄 Limpiar archivos", key="btn_clear_todouno"):
@@ -3295,7 +3302,7 @@ def tab_todo_en_uno():
 
     # Verificar que están todos los archivos
     if not all([f_sep, f_pie, f_web]):
-        warning_box("Carga los **3 archivos** para continuar")
+        warning_box("Carga los <b>3 archivos</b> para continuar")
         return
 
     st.markdown("---")
