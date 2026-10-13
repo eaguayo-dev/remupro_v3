@@ -6387,8 +6387,9 @@ def main():
 
     show_header()
 
-    # Aviso "Sistema actualizado" (cada navegador lo descarta con "Ya lo vi").
-    show_update_banner()
+    # Aviso "Sistema actualizado": desactivado a pedido. Para volver a mostrarlo,
+    # descomentar la línea (la versión y UPDATES siguen en config/version.py).
+    # show_update_banner()
 
     # Pestañas dinámicas: las 5 base siempre; BRP/Duplicados según preferencias.
     # tab_names y tab_funcs se mantienen en paralelo (mismo índice = misma pestaña).
