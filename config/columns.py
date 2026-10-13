@@ -88,7 +88,10 @@ SALARY_BENEFIT_COLUMNS: List[str] = [
     'ART.42 LEY 21.526 ASIST.EDUC', 'ALUMNOS. PRIORITARIOS ASIS. DE',
     'ASIG.Por Tramo de Desarrollo P', 'Rec. Doc. Establ. Als Priorita',
     'Planilla Suplementaria', 'ART.5°TRANS. LEY20.903',
-    
+    # Haberes nuevos que llegaron con código H### (ver normalize_haber_codes)
+    'BONO ESCOLAR', 'ASIGNACION ENCARGADO DE C', 'BONO SALA CUNA',
+    'BONO ART 13 LEY 21806', 'Cotización Expectativa de Vi', 'Rentabilidad Protegida',
+
     # Totales y descuentos
     'TOTAL HABERES', 'IMPOSICIONES antic', 'SALUD',
     'Imposicion Voluntaria', 'MONTO IMPONIBLE', 'MONTO IMP.DESAHUCIO',
@@ -228,6 +231,50 @@ def format_rut(rut) -> str:
 # Limpieza de columnas
 # ---------------------------------------------------------------------------
 
+_HABER_CODE_RE = re.compile(r'^H\d{3}\s+(.+)$')
+
+
+def normalize_haber_codes(df: pd.DataFrame) -> pd.DataFrame:
+    """Quita el código 'H### ' de los haberes y los deja con su nombre de siempre.
+
+    Las planillas nuevas traen los haberes como 'H001 SUELDO BASE'. Es el MISMO
+    concepto que 'SUELDO BASE' (se RENOMBRA, no se suma). Pero el título está
+    truncado a 30 caracteres INCLUYENDO el código, así que 'H004 ASIGNACION
+    RESPONSABILIDA' debe calzar con 'ASIGNACION RESPONSABILIDAD' por prefijo.
+
+    Caso de choque: 'H200 MUTUAL' (haber) y 'MUTUAL' (descuento) llegan juntos.
+    El haber (con código) conserva el nombre limpio, igual que antes cuando
+    pandas dejaba la primera como 'MUTUAL' y la segunda como 'MUTUAL.1'; el
+    descuento pasa a 'MUTUAL.1'. Archivos sin códigos H### no se tocan.
+    """
+    known = SPECIAL_SALARY_COLUMNS + SALARY_BENEFIT_COLUMNS
+    cols = list(df.columns)
+    if not any(_HABER_CODE_RE.match(str(c).strip()) for c in cols):
+        return df
+
+    rename = {}
+    for c in cols:
+        m = _HABER_CODE_RE.match(str(c).strip())
+        if not m:
+            continue
+        name = m.group(1).strip()
+        if name not in known:
+            # Título truncado: se busca el nombre conocido que empieza igual.
+            cands = [k for k in known if len(name) >= 8 and k.startswith(name)]
+            if len(set(cands)) == 1:
+                name = cands[0]
+        rename[c] = name
+
+    # Si el nombre limpio ya lo usa otra columna (el descuento), esa pasa a '.1'.
+    taken = {str(c).strip() for c in cols if c not in rename}
+    for c, name in list(rename.items()):
+        if name in taken:
+            old = next(x for x in cols if x not in rename and str(x).strip() == name)
+            rename[old] = f'{name}.1'
+    return df.rename(columns=rename)
+
+
+
 def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Strip espacios en nombres de columna, drop columnas vacías y unnamed."""
     df.columns = df.columns.str.strip()
@@ -237,7 +284,7 @@ def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
         df = df.drop(columns=unnamed)
     # Eliminar columnas completamente vacías (sin nombre)
     df = df.loc[:, df.columns.astype(bool)]
-    return df
+    return normalize_haber_codes(df)
 
 
 # ---------------------------------------------------------------------------

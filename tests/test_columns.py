@@ -207,3 +207,41 @@ class TestGetAvailableColumns:
     def test_none_available(self):
         df = pd.DataFrame({"A": [1]})
         assert get_available_columns(df, ["X", "Y"]) == []
+
+
+# ── normalize_haber_codes (títulos con código H###) ────────────────
+class TestNormalizeHaberCodes:
+    def _df(self, cols):
+        return pd.DataFrame([[0] * len(cols)], columns=cols)
+
+    def test_quita_codigo_y_renombra(self):
+        from config.columns import normalize_haber_codes
+        df = normalize_haber_codes(self._df(['H001 SUELDO BASE', 'H003 ASIGNACION EXPERIENCIA']))
+        assert list(df.columns) == ['SUELDO BASE', 'ASIGNACION EXPERIENCIA']
+
+    def test_titulo_truncado_calza_por_prefijo(self):
+        from config.columns import normalize_haber_codes
+        df = normalize_haber_codes(self._df([
+            'H004 ASIGNACION RESPONSABILIDA', 'H704 ASIG.Por Tramo de Desarro',
+            'H113 RETROCT.ALS.PRIORIT.ASIST']))
+        assert list(df.columns) == ['ASIGNACION RESPONSABILIDAD',
+                                    'ASIG.Por Tramo de Desarrollo P',
+                                    'RETROCT.ALS.PRIORIT.ASIST.EDUC']
+
+    def test_haber_y_descuento_homonimos_no_se_pisan(self):
+        from config.columns import normalize_haber_codes
+        df = normalize_haber_codes(self._df(['H200 MUTUAL', 'MUTUAL',
+                                             'H774 Aporte Adicional AFP', 'Aporte Adicional AFP']))
+        assert list(df.columns) == ['MUTUAL', 'MUTUAL.1',
+                                    'Aporte Adicional AFP', 'Aporte Adicional AFP.1']
+        assert df.columns.is_unique
+
+    def test_haber_nuevo_desconocido_queda_sin_codigo(self):
+        from config.columns import normalize_haber_codes
+        df = normalize_haber_codes(self._df(['H041 BONO ESCOLAR', 'H169 BONO SALA CUNA']))
+        assert list(df.columns) == ['BONO ESCOLAR', 'BONO SALA CUNA']
+
+    def test_formato_antiguo_no_cambia(self):
+        from config.columns import normalize_haber_codes
+        cols = ['SUELDO BASE', 'MUTUAL', 'TOTAL HABERES']
+        assert list(normalize_haber_codes(self._df(cols)).columns) == cols

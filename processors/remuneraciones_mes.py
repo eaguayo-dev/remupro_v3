@@ -37,6 +37,7 @@ from config.columns import (
     SPECIAL_SALARY_COLUMNS,
     SALARY_BENEFIT_COLUMNS,
     normalize_rut,
+    normalize_haber_codes,
     get_available_columns,
     MESES_NUM_TO_NAME,
 )
@@ -167,7 +168,7 @@ def _columnas_monto(df: pd.DataFrame):
 
 def _cargar_salarios(salary_path: Path, horas_mes: pd.DataFrame):
     """Carga Hoja1, cruza por RUT con las horas del mes. Devuelve (merged, [(origen, salida)])."""
-    sal = pd.read_excel(salary_path, sheet_name='Hoja1', engine='openpyxl')
+    sal = normalize_haber_codes(pd.read_excel(salary_path, sheet_name='Hoja1', engine='openpyxl'))
     sal = sal[sal['rut'].notna() & (sal['rut'].astype(str).str.strip() != '')].copy()
     sal['_rut'] = sal['rut'].map(normalize_rut)
     # Horas agregadas por RUT (por si una persona tiene varias filas en el mes).
