@@ -1209,6 +1209,10 @@ st.markdown("""
        lateral y el botón para reabrir la barra lateral, que ahora es la navegación. */
     [data-testid="stHeader"] {background: transparent;}
     [data-testid="stToolbar"], [data-testid="stDecoration"] {visibility: hidden;}
+    /* El botón para reabrir la barra lateral vive DENTRO de stToolbar: sin esto,
+       al cerrar el menú desaparecía también el botón para volver a abrirlo. */
+    [data-testid="stExpandSidebarButton"],
+    [data-testid="stExpandSidebarButton"] * {visibility: visible !important;}
     
     /* ===== ANIMACIONES ===== */
     @keyframes fadeIn {
