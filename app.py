@@ -967,6 +967,28 @@ st.markdown("""
         font-size: 0.9rem;
     }
     
+    /* ===== BARRA LATERAL FIJA (escritorio) =====
+       Siempre visible: sin botón para cerrarla, sin arrastre de ancho y con los
+       grupos del menú siempre abiertos. En pantallas angostas (celular) se deja
+       el comportamiento normal de Streamlit para no dejar la app sin menú. */
+    @media (min-width: 992px) {
+        [data-testid="stSidebar"] {
+            width: 18rem !important;
+            min-width: 18rem !important;
+            max-width: 18rem !important;
+        }
+        [data-testid="stSidebarCollapseButton"],
+        [data-testid="stSidebarResizeHandle"] {
+            display: none !important;
+        }
+        [data-testid="stNavSectionHeader"] {
+            pointer-events: none;
+        }
+        [data-testid="stNavSectionHeader"] [data-testid="stIconMaterial"] {
+            display: none;
+        }
+    }
+
     /* ===== TABS ===== */
     .stTabs [data-baseweb="tab-list"] {
         gap: 0.5rem;
