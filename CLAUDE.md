@@ -10,7 +10,7 @@ RemuPro: aplicación **local** (Streamlit, Windows y Mac) que prorratea sueldos 
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.lock
 streamlit run app.py            # app en http://localhost:8501
 pytest tests/ -q                # tests (correrlos antes de cada commit)
 ```

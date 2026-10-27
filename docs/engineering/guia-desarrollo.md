@@ -167,7 +167,7 @@ Hay dos niveles, a propósito:
 
 ```bash
 # Instalar dependencias
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.lock
 
 # Correr la app
 streamlit run app.py

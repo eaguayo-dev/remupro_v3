@@ -1,0 +1,15 @@
+version: 2
+updates:
+  # Dependabot actualiza requirements.txt; requirements.lock se regenera con uv (ver docs/engineering/seguridad.md)
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "devcontainers"
+    directory: "/"
+    schedule:
+      interval: "weekly"
