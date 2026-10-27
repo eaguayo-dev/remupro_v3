@@ -64,7 +64,7 @@ Iniciar_RemuPro.bat
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.lock
 streamlit run app.py
 ```
 
@@ -124,6 +124,10 @@ pytest tests/ -q
 ## Datos y privacidad
 
 El historial se guarda en `data/remupro.db` (SQLite local), que está en el `.gitignore` porque contiene datos de remuneraciones. **Nunca subas ese archivo ni las planillas al repositorio.**
+
+## Seguridad
+
+Última revisión de dependencias: 2026-10-27. Detalle y cómo regenerar `requirements.lock` en [docs/engineering/seguridad.md](docs/engineering/seguridad.md).
 
 ## Licencia
 

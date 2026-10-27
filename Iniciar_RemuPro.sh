@@ -29,7 +29,7 @@ source venv/bin/activate
 # Instalar dependencias si es necesario
 if [ ! -f ".deps_installed" ]; then
     echo "  ⚙️  Instalando dependencias..."
-    pip install -q -r requirements.txt
+    pip install -q --require-hashes -r requirements.lock
     touch .deps_installed
     echo "  ✅ Dependencias instaladas"
     echo ""

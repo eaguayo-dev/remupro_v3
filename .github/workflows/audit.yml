@@ -1,0 +1,20 @@
+name: Auditoría de dependencias
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 12 * * 1"
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      # Audita el lockfile (lo que realmente se instala), no los rangos de requirements.txt
+      - run: pip install pip-audit && pip-audit -r requirements.lock --require-hashes --no-deps --disable-pip
+      - run: pip install --require-hashes -r requirements.lock && pytest tests -q
